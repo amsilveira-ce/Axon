@@ -3,6 +3,11 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+
+
+# Ignore the config file
+axon.config.json
+
 # C extensions
 *.so
 
