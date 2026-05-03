@@ -10,6 +10,12 @@ from pydantic import BaseModel, Field
 from axon.types import OperationalMode, ReasoningMode
 
 
+# ============================
+#   Modelos de configuração
+# ============================
+
+# obs:Por serem models relacionados ao arquivo de configuração eles ficam aqui por hora 
+
 class GatewayEntry(BaseModel):
     id: str
     url: str 
@@ -23,3 +29,15 @@ class PAConfig(BaseModel):
     gateways: list[GatewayEntry] = Field(default_factory=list)
     max_intractions: int = 10 
     cache: bool = True 
+
+class GAConfig(BaseModel):
+    port: int = 5000
+    # Diretório que guardamos os arquivos runtime - default config
+    registry_path = ".axon/registry.json"
+
+class AxonConfig(BaseModel):
+    # Configuração do Axon básica envolve configurar o Principal Agent e Gateway Agent 
+    # esses objetos criam a concepção do axon.config.json
+    version: str      = "0.1.0"
+    pa:      PAConfig = Field(default_factory=PAConfig)
+    ga:      GAConfig = Field(default_factory=GAConfig)
