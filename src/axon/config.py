@@ -32,7 +32,7 @@ class PAConfig(BaseModel):
     default_mode: OperationalMode = OperationalMode.agent 
     default_reasoning_mode: ReasoningMode = ReasoningMode.react
     gateways: list[GatewayEntry] = Field(default_factory=list)
-    max_intractions: int = 10 
+    max_iterations: int = 10 
     cache: bool = True 
 
 class GAConfig(BaseModel):

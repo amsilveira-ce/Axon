@@ -8,3 +8,6 @@ dependencies = [
     "pydantic>=2.13.3",
     "typer>=0.25.1",
 ]
+
+[project.scripts]
+axon = "axon.cli.main:app"
