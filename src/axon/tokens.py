@@ -7,6 +7,7 @@ Responsabilidades desse modulo
 from axon.types import AxonToken, TokenStore
 from axon.config import read_config
 import secrets 
+import json
 from pathlib import Path
 
 AXON_TOKEN_PREFIX = "axon_tk_"
@@ -19,7 +20,7 @@ def _tokens_registry_storage_path(cwd: Path | None = None) -> Path:
     return (cwd or Path.cwd()) / base / "tokens.json"
 
 def read_store(cwd: Path | None = None) -> TokenStore:
-    p = _tokens_path(cwd)
+    p = _tokens_registry_storage_path(cwd)
     if not p.exists():
         return TokenStore()
     return TokenStore.model_validate(json.loads(p.read_text(encoding="utf-8")))
