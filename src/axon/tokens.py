@@ -46,3 +46,6 @@ def generate(name: str, cwd: Path| None = None) -> AxonToken:
     write_store(store, cwd)
 
     return token 
+
+def list_tokens(cwd: Path | None = None) -> list[AxonToken]:
+    return read_store(cwd).tokens

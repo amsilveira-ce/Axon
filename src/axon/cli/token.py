@@ -1,8 +1,9 @@
 import typer
 from rich.table import Table
 from rich import box
+from datetime import timezone
 from axon.cli._print import console, ok, info, warn, fatal, divider, step
-from axon.tokens import generate
+from axon.tokens import generate, list_tokens
 
 
 app = typer.Typer(help="Manage Axon registration tokens.")
@@ -47,4 +48,46 @@ def token_generate(
     console.print()
     console.print(info("[dim]saved to .axon/tokens.json[/dim]"))
     console.print()
+
+@app.command("list")
+def token_list(
+    show_all: bool = typer.Option(False, "--all", help="Include used and revoked tokens"),
+) -> None:
+    """List registration tokens in the local store."""
+    tokens = list_tokens()
  
+    if not show_all:
+        tokens = [t for t in tokens if t.status.value == "pending"]
+ 
+    console.print()
+ 
+    if not tokens:
+        if show_all:
+            console.print(f"  [dim]No tokens found in .axon/tokens.json[/dim]")
+        else:
+            console.print(f"  [dim]No pending tokens. Run 'axon token generate --name <name>'[/dim]")
+        console.print()
+        return
+ 
+    table = Table(box=box.SIMPLE, show_header=True, header_style="dim", pad_edge=False)
+    table.add_column("TOKEN",   style="cyan",    no_wrap=True)
+    table.add_column("NAME",    style="default", no_wrap=True)
+    table.add_column("STATUS",  style="default", no_wrap=True)
+    table.add_column("USED BY", style="dim",     no_wrap=True)
+    table.add_column("CREATED", style="dim",     no_wrap=True)
+ 
+    status_colors = {
+        "pending": "[yellow]pending[/yellow]",
+        "used":    "[green]used[/green]",
+        "revoked": "[red]revoked[/red]",
+    }
+ 
+    for t in tokens:
+        short = t.token[:24] + "..."
+        created = t.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        status_str = status_colors.get(t.status.value, t.status.value)
+        table.add_row(short, t.name, status_str, t.used_by or "—", created)
+ 
+    console.print(table)
+    console.print(info(f"[dim]{len(tokens)} token(s) · use --all to include used/revoked[/dim]"))
+    console.print()
