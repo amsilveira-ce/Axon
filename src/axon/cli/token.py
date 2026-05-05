@@ -3,7 +3,7 @@ from rich.table import Table
 from rich import box
 from datetime import timezone
 from axon.cli._print import console, ok, info, warn, fatal, divider, step
-from axon.tokens import generate, list_tokens
+from axon.tokens import generate, list_tokens, TokenVerificationError, revoke
 
 
 app = typer.Typer(help="Manage Axon registration tokens.")
@@ -90,4 +90,28 @@ def token_list(
  
     console.print(table)
     console.print(info(f"[dim]{len(tokens)} token(s) · use --all to include used/revoked[/dim]"))
+    console.print()
+
+@app.command("revoke")
+def token_revoke(
+    token_value: str = typer.Argument(..., help="Token value to revoke (axon_tk_...)"),
+) -> None:
+    """
+    Revoke a registration token.
+ 
+    Revoked tokens are rejected in future registrations.
+    Resources already registered with this token are not immediately affected
+    — their status updates on the next 'axon ga resource ping'.
+    """
+    try:
+        entry = revoke(token_value)
+    except TokenVerificationError as e:
+        fatal(str(e))
+ 
+    console.print()
+    console.print(f"  {ok(f'Token for [bold]{entry.name}[/bold] revoked')}")
+    console.print(info(f"[dim]{entry.token[:24]}...[/dim]"))
+    if entry.used_by:
+        console.print(info(f"[dim]was used by resource {entry.used_by}[/dim]"))
+        console.print(warn("run 'axon ga resource ping --all' to update resource status"))
     console.print()

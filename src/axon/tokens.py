@@ -4,7 +4,7 @@ axon/tokens.py - gestão de tokens Axon
 Responsabilidades desse modulo 
     - Emitir tokens para registro de recursos do tipo "agent"
 """
-from axon.types import AxonToken, TokenStore
+from axon.types import AxonToken, TokenStore, TokenStatus
 from axon.config import read_config
 import secrets 
 import json
@@ -49,3 +49,29 @@ def generate(name: str, cwd: Path| None = None) -> AxonToken:
 
 def list_tokens(cwd: Path | None = None) -> list[AxonToken]:
     return read_store(cwd).tokens
+
+
+
+class TokenVerificationError(Exception):
+    """Raised quando um token não passa na verificação local."""
+
+
+def revoke(token_or_name: str, cwd: Path | None = None) -> AxonToken:
+    store = read_store(cwd)
+    
+    # Aceita tanto o valor do token quanto o nome declarado no generate
+    entry = next(
+        (t for t in store.tokens
+         if t.token == token_or_name or t.name == token_or_name),
+        None
+    )
+    
+    if entry is None:
+        raise TokenVerificationError(
+            f"token not found: '{token_or_name}'\n"
+            f"  run 'axon token list --all' to see available tokens"
+        )
+    
+    entry.status = TokenStatus.revoked
+    write_store(store, cwd)
+    return entry
