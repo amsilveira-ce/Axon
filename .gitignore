@@ -7,7 +7,7 @@ __pycache__/
 
 # Ignore the config file
 axon.config.json
-
+.axon 
 # C extensions
 *.so
 

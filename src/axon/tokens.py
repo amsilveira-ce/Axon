@@ -31,9 +31,8 @@ def write_store(store: TokenStore, cwd: Path | None = None) -> None:
     p.write_text(store.model_dump_json(indent=2) + "\n", encoding="utf-8")
  
 
-# No cli o comando se parece com: axon token generate --name <name> 
-# estrutura do token segue axon_tk_<payload>
-def generate(name: str, ) -> AxonToken: 
+# Emissão de um token para registro de um recurso do tipo agente 
+def generate(name: str, cwd: Path| None = None) -> AxonToken: 
     payload = f"{AXON_TOKEN_PREFIX}{secrets.token_urlsafe(24)}"
     token = AxonToken(
         token = payload,
@@ -44,6 +43,6 @@ def generate(name: str, ) -> AxonToken:
 
     store = read_store()
     store.tokens.append(token)
-    write_store(store, token)
+    write_store(store, cwd)
 
     return token 

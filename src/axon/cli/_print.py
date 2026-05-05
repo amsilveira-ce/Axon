@@ -7,14 +7,31 @@ console = Console()
 err_console = Console(stderr=True)
 
 
-def warn(text: str) -> str:
-    return f"  [yellow]Warning:[/yellow] {text}"
-
-
 def ok(text: str) -> str:
-    return f"  [green]✓[/green]  {text}"
-
-
-def fatal(text: str) -> None:
-    err_console.print(f"  [red]Error:[/red] {text}")
-    raise typer.Exit(code=1)
+    return f"[green]◆[/green] {text}"
+ 
+ 
+def info(text: str) -> str:
+    return f"  [dim]│[/dim]  {text}"
+ 
+ 
+def step(text: str) -> str:
+    """A completed step in a sequence."""
+    return f"[dim]◇[/dim] {text}"
+ 
+ 
+def warn(text: str) -> str:
+    return f"[yellow]▲[/yellow] {text}"
+ 
+ 
+def err(text: str) -> str:
+    return f"[red]■[/red] {text}"
+ 
+ 
+def divider() -> str:
+    return "[dim]│[/dim]"
+ 
+ 
+def fatal(message: str) -> None:
+    err_console.print(err(message))
+    raise SystemExit(1)
