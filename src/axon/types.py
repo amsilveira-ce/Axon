@@ -3,166 +3,92 @@ from __future__ import annotations
 from enum import Enum
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field, Any
-# ======================================================
-# Modos Operacionais e Estratégias de Raciocínio
-# ======================================================
 
-# Este módulo define os modos de operação do Principal Agent (PA)
-# e as estratégias de raciocínio utilizadas durante a execução de tarefas.
-#
-# A separação entre "modo operacional" e "modo de raciocínio" é uma decisão
-# de projeto que permite desacoplar:
-# - COMO o agente interage com o usuário (interface/comportamento)
-# - COMO o agente resolve o problema internamente (estratégia de execução)
-
-
-# ------------------------------------------------------
-# OperationalMode
-# ------------------------------------------------------
-# Define o comportamento externo do sistema e o nível de autonomia do agente.
 
 class OperationalMode(str, Enum):
     agent   = "agent"
     copilot = "copilot"
     no_llm  = "no-llm"
-
-
-# ------------------------------------------------------
-# ReasoningMode
-# ------------------------------------------------------
-# Define a estratégia de raciocínio utilizada pelo agente durante a execução.
-# Esses modos afetam diretamente como tarefas são decompostas e resolvidas.
+ 
+ 
 class ReasoningMode(str, Enum):
     react = "react"
     rewoo = "rewoo"
-    # tot   = "tot"
+    tot   = "tot"
+ 
 
-# ======================================================
-# Objetos relacionados com os recursos dentro do Axon
-# ======================================================
-# Um recurso no Axon representa qualquer entidade externa invocável pelo Principal Agent.
-# Isso inclui tanto ferramentas (via MCP) quanto agentes especializados (via A2A).
-#
-# Recursos são definidos como todos os componentes externos ao Principal Agent,
-# excluindo os Gateway Agents, que atuam apenas como intermediários de descoberta e roteamento.
-#
-# Dessa forma, recursos constituem a camada funcional do sistema, responsável pela
-# execução efetiva de tarefas delegadas.
-
+# Configurações relacionados aos recursos 
 class ResourceType(str, Enum):
     agent = "agent"
     mcp   = "mcp"
-
+ 
+ 
 class ResourceStatus(str, Enum):
     online     = "online"
     offline    = "offline"
     validating = "validating"
     failed     = "failed"
 
-# ======================================================
-# A2A Agent Card
-# ======================================================
 
-# Este módulo segue o schema oficial do protocolo A2A:
-# https://a2a-protocol.org/latest/specification/
-#
-# A validação de recursos do tipo agente A2A é realizada com base
-# nas informações contidas no Agent Card, obtido a partir do endpoint:
-# /.well-known/agent.json
-#
-# O processo consiste em:
-# 1. Realizar o fetch do Agent Card exposto pelo agente
-# 2. Validar os campos essenciais (ex: name, version, skills)
-# 3. A partir dessa validação, registrar o agente como um recurso válido no sistema
-#
-# Para suportar esse processo, são definidos objetos que representam:
-# - Skill: capacidades específicas que o agente pode executar
-# - Capability: abstrações de funcionalidades expostas pelo agente
-#
-# Esses elementos estruturam a forma como agentes A2A são descritos,
-# descobertos e integrados à framework.
-
-class A2ASkill(BaseModel):
-    id:          str
-    name:        str | None = None
-    description: str
-    tags:        list[str] = Field(default_factory=list)
-    examples:    list[str] = Field(default_factory=list)
-    inputModes:  list[str] = Field(default_factory=list)
-    outputModes: list[str] = Field(default_factory=list)
-
-class A2ACapabilities(BaseModel):
-    streaming:              bool = False
-    pushNotifications:      bool = False
-    stateTransitionHistory: bool = False
-
-# ======================================================
-# Agent Card / Axon token
-# ======================================================
-
-# Para fins de registro e autenticação dentro do Axon, é utilizado o conceito de "axon.token",
-# análogo a uma API Key.
-#
-# O axon.token tem como objetivo garantir que o agente:
-# - declarou explicitamente sua participação no ecossistema Axon
-# - teve seu Agent Card validado pela framework (incluindo formato e versão do protocolo)
-# - possui um identificador único associado ao seu estado no momento do registro
-#
-# Durante o processo de registro, é gerado um fingerprint baseado em SHA-256
-# a partir do conteúdo do Agent Card. Esse fingerprint permite:
-# - identificar unicamente o agente
-# - detectar alterações no Agent Card ao longo do tempo
-# - assegurar integridade e rastreabilidade do recurso registrado
-#
-# Dessa forma, o axon.token atua como um mecanismo leve de identificação,
-# validação e versionamento de agentes dentro da framework.
-
-class AxonExtension(BaseModel):
-    """Extensão Axon obrigatória no agent card para registro."""
-    token:            str        # prefixo axon_tk_
-    protocol_version: str = "0.1"
-    input_schema:     dict[str, Any] = Field(default_factory=dict)
-    output_schema:    dict[str, Any] = Field(default_factory=dict)
+class TokenStatus(str, Enum):
+    """
+    Ciclo de vida de um token emitido pelo registry local.
  
-class AgentCard(BaseModel):
-    """Agent Card padrão A2A com extensão Axon."""
-    name:             str
-    description:      str
-    url:              str
-    version:          str
-    skills:           list[A2ASkill]
-    capabilities:     A2ACapabilities = Field(default_factory=A2ACapabilities)
-    defaultInputModes:  list[str] = Field(default_factory=lambda: ["text/plain"])
-    defaultOutputModes: list[str] = Field(default_factory=lambda: ["text/plain"])
-    axon:             AxonExtension | None = None  # None = agente sem extensão Axon
+    pending  → emitido, ainda não consumido por nenhum registro
+    used     → consumido (max_uses atingido)
+    revoked  → revogado explicitamente — rejeitado em novos registros
+    """
+    pending = "pending"
+    used    = "used"
+    revoked = "revoked"
+
+class AxonToken(BaseModel):
+    """
+    Estrutura de um token dentro da framework do Axon, o token segue a
+    estrutura axon_tk_<payload>
+
+    registry_id e registry_url servem para responder a pergunta "quem 
+    emitiu esse token e onde verificar se ele é valido", no MVP o registry_id
+    é preenchdio como "local" e portanto a checagem é feita no .axon/tokens.json
+
+    Em um cenário onde um vendor gerou esse token, nós teriamos o registry_id
+    algo como "google-agent-gateway" e o registry_url serviria para validar se
+    esse token foi realmente gerado pelo vendo. 
  
-    model_config = {"populate_by_name": True}
+    Para registries externos (vendor), registry_id != "local" e o CLI
+    chamará POST {registry_url}/verify-token para validar — o formato do
+    token e o contrato de verificação são idênticos, só o destino muda.
 
-# ======================================================
-# Resource Registry Model
-# ======================================================
+    Para o MVP no CLI não vamos dar suporte para flag de expiração do token
+    mas o cenário foi sim mapeado e fica algo como: 
+        axon token generate --name meu-agent --expires 24 #expira em 24h
+ 
+    Campos:
+      token:        valor do token (axon_tk_<urlsafe random>)
+      name:         nome declarado ao gerar — identifica o recurso alvo
+      registry_id:  "local" | id do vendor 
+      registry_url: None para local; endpoint /verify-token para externos
+      max_uses:     1 = uso único (padrão); None = ilimitado
+      use_count:    quantas vezes foi consumido
+      used_by:      id do resource que consumiu (quando status=used)
+    """
+    token:        str
+    name:         str
 
-# O objeto Resource representa a unidade básica de registro dentro do Axon.
-# Ele abstrai qualquer entidade externa invocável pelo Principal Agent,
-# incluindo tanto agentes A2A quanto ferramentas integradas via MCP.
-#
-# Este modelo define a identidade, capacidades e metadados necessários
-# para descoberta, validação e execução de recursos no sistema.
+    registry_id:  str = "local"
+    registry_url: str | None = None
 
-# OBS:
-# Este modelo está sujeito a evolução conforme novos tipos de recursos 
-# e mecanismos de validação sejam incorporados à framework.
+    created_at:   datetime = Field(default_factory=lambda: datetime.now(timezone.utc)) # preenchido automaticamente com o pydantic 
+    expires_at:   datetime | None = None # None por hora é permitido para poder ocorrer testes com um unico token
 
+    max_uses:     int | None = 1 # permite um registro, um token por registro 
+    use_count:    int = 0   # controlar o uso desse token 
+    status:       TokenStatus = TokenStatus.pending # quando um token é criado ele recebe o statul de pending = "disponivel para uso"
+    used_by:      str | None = None 
+ 
+ 
+class TokenStore(BaseModel):
+    """Conteúdo de .axon/tokens.json."""
+    version: str = "0.1.0"
+    tokens:  list[AxonToken] = Field(default_factory=list)
 
-class Resource(BaseModel):
-    id:            str
-    type:          ResourceType
-    name:          str
-    endpoint:      str
-    description:   str
-    skills:        list[A2ASkill] = Field(default_factory=list)
-    input_schema:  dict[str, Any] = Field(default_factory=dict)
-    output_schema: dict[str, Any] = Field(default_factory=dict)
-    fingerprint:   str                      # sha256 do agent card canônico
-    registered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    status:        ResourceStatus = ResourceStatus.online
