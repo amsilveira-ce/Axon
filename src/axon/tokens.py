@@ -6,6 +6,7 @@ Responsabilidades desse modulo
 """
 from axon.types import AxonToken, TokenStore, TokenStatus
 from axon.config import read_config
+from datetime import timezone, datetime
 import secrets 
 import json
 from pathlib import Path
@@ -74,4 +75,43 @@ def revoke(token_or_name: str, cwd: Path | None = None) -> AxonToken:
     
     entry.status = TokenStatus.revoked
     write_store(store, cwd)
+    return entry
+
+def verify_local(token_value: str, cwd: Path | None = None) -> AxonToken:
+    """
+    Verifica um token contra o store local (.axon/tokens.json).
+ 
+    Levanta TokenVerificationError se:
+      - token não foi encontrado no store
+      - token está revogado
+      - token já foi usado (max_uses atingido)
+ 
+    Retorna o AxonToken sem marcá-lo como usado — chame mark_used() após
+    confirmar que o registro foi bem-sucedido.
+    """
+    store = read_store(cwd)
+    entry = next((t for t in store.tokens if t.token == token_value), None)
+ 
+    if entry is None:
+        raise TokenVerificationError(
+            "token not found in local store — "
+            "run 'axon token generate --name <agent-name>' first"
+        )
+ 
+    if entry.status == TokenStatus.revoked:
+        raise TokenVerificationError(
+            f"token '{token_value[:20]}...' has been revoked"
+        )
+ 
+    if entry.max_uses is not None and entry.use_count >= entry.max_uses:
+        raise TokenVerificationError(
+            f"token '{token_value[:20]}...' has already been used "
+            f"({entry.use_count}/{entry.max_uses} uses)"
+        )
+ 
+    if entry.expires_at and datetime.now(timezone.utc) > entry.expires_at:
+        raise TokenVerificationError(
+            f"token '{token_value[:20]}...' expired at {entry.expires_at}"
+        )
+ 
     return entry
