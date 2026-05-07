@@ -42,7 +42,7 @@ def generate(name: str, cwd: Path| None = None) -> AxonToken:
         max_uses= 1
     )
 
-    store = read_store()
+    store = read_store(cwd)
     store.tokens.append(token)
     write_store(store, cwd)
 
@@ -114,4 +114,40 @@ def verify_local(token_value: str, cwd: Path | None = None) -> AxonToken:
             f"token '{token_value[:20]}...' expired at {entry.expires_at}"
         )
  
+    return entry
+
+
+def mark_used(token_value: str, resource_id: str, cwd: Path | None = None) -> AxonToken:
+    """
+    Marca um token como consumido por um resource já persistido.
+
+    Atualiza use_count/used_by e muda o status para "used" quando o token
+    atinge max_uses.
+    """
+    store = read_store(cwd)
+    entry = next((t for t in store.tokens if t.token == token_value), None)
+
+    if entry is None:
+        raise TokenVerificationError(
+            "token not found in local store — cannot mark it as used"
+        )
+
+    if entry.status == TokenStatus.revoked:
+        raise TokenVerificationError(
+            f"token '{token_value[:20]}...' has been revoked"
+        )
+
+    if entry.max_uses is not None and entry.use_count >= entry.max_uses:
+        raise TokenVerificationError(
+            f"token '{token_value[:20]}...' has already been used "
+            f"({entry.use_count}/{entry.max_uses} uses)"
+        )
+
+    entry.use_count += 1
+    entry.used_by = resource_id
+
+    if entry.max_uses is not None and entry.use_count >= entry.max_uses:
+        entry.status = TokenStatus.used
+
+    write_store(store, cwd)
     return entry

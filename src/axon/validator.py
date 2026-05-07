@@ -9,7 +9,10 @@ from axon.types import AgentCard, AxonMetadata, AXON_EXTENSION_URI
  
 AXON_TOKEN_PREFIX           = "axon_tk_"
 SUPPORTED_PROTOCOL_VERSIONS = {"0.1"}
-AGENT_CARD_PATH             = "/.well-known/agent.json"
+AGENT_CARD_PATHS            = (
+    "/.well-known/agent-card.json",
+    "/.well-known/agent.json",
+)
 HEALTH_PATH                 = "/health"
 TIMEOUT                     = 5.0
 
@@ -75,7 +78,7 @@ def validate_agent(url: str)-> ValidationResult:
     Valida um agente A2A antes do registro no Gateway.
 
     Etapas:
-      1. Fetch do agent card (/.well-known/agent.json)
+      1. Fetch do agent card (A2A/ADK ou rota legada)
       2. Validação de schema A2A
       3. Verificação do token Axon (metadata["axon"]["token"])
       4. Fingerprint SHA-256
@@ -84,11 +87,28 @@ def validate_agent(url: str)-> ValidationResult:
 
     # Etapa 1: fetch do agent card 
     try:
-        resp = httpx.get(
-            f"{base}{AGENT_CARD_PATH}", timeout=TIMEOUT, follow_redirects=True
-        )
-        resp.raise_for_status()
-        raw: dict = resp.json()
+        raw: dict | None = None
+        last_status_code: int | None = None
+
+        for card_path in AGENT_CARD_PATHS:
+            resp = httpx.get(
+                f"{base}{card_path}", timeout=TIMEOUT, follow_redirects=True
+            )
+            if resp.status_code == 404:
+                last_status_code = resp.status_code
+                continue
+            resp.raise_for_status()
+            raw = resp.json()
+            break
+
+        if raw is None:
+            return ValidationResult(
+                ok=False, step="agent_card",
+                error=(
+                    f"agent card not found ({last_status_code or 404}) — "
+                    f"does the agent expose one of: {', '.join(AGENT_CARD_PATHS)}?"
+                )
+            )
     except httpx.ConnectError:
         return ValidationResult(
             ok=False, step="agent_card",
@@ -104,7 +124,7 @@ def validate_agent(url: str)-> ValidationResult:
             ok=False, step="agent_card",
             error=(
                 f"agent card not found ({e.response.status_code}) — "
-                f"does the agent expose {AGENT_CARD_PATH}?"
+                f"does the agent expose one of: {', '.join(AGENT_CARD_PATHS)}?"
             )
         )
     except Exception as e:

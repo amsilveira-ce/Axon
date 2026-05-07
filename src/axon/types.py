@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from typing import Any
 
 
@@ -128,8 +128,14 @@ class A2ASkill(BaseModel):
     description: str
     tags:        list[str] = Field(default_factory=list)
     examples:    list[str] = Field(default_factory=list)
-    inputModes:  list[str] = Field(default_factory=list)
-    outputModes: list[str] = Field(default_factory=list)
+    inputModes:  list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("inputModes", "input_modes"),
+    )
+    outputModes: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("outputModes", "output_modes"),
+    )
  
     model_config = {"extra": "allow"}
  
@@ -171,6 +177,15 @@ class AxonMetadata(BaseModel):
     protocol_version: str = "0.1"
  
     model_config = {"extra": "allow"}
+
+
+class A2AInterface(BaseModel):
+    protocol_binding: str = Field(
+        validation_alias=AliasChoices("protocol_binding", "protocolBinding")
+    )
+    url: str
+
+    model_config = {"extra": "allow"}
  
  
 class AgentCard(BaseModel):
@@ -188,12 +203,22 @@ class AgentCard(BaseModel):
     """
     name:               str
     description:        str
-    url:                str
+    url:                str | None = None
     version:            str
     skills:             list[A2ASkill]
     capabilities:       A2ACapabilities = Field(default_factory=A2ACapabilities)
-    defaultInputModes:  list[str]       = Field(default_factory=lambda: ["text/plain"])
-    defaultOutputModes: list[str]       = Field(default_factory=lambda: ["text/plain"])
+    defaultInputModes:  list[str]       = Field(
+        default_factory=lambda: ["text/plain"],
+        validation_alias=AliasChoices("defaultInputModes", "default_input_modes"),
+    )
+    defaultOutputModes: list[str]       = Field(
+        default_factory=lambda: ["text/plain"],
+        validation_alias=AliasChoices("defaultOutputModes", "default_output_modes"),
+    )
+    supported_interfaces: list[A2AInterface] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("supported_interfaces", "supportedInterfaces"),
+    )
  
     model_config = {"extra": "allow", "populate_by_name": True}
  

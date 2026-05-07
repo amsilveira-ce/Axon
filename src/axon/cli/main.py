@@ -2,7 +2,7 @@ from __future__ import annotations
  
 import typer
  
-from axon.cli import init, token
+from axon.cli import init, token, add
 
 app = typer.Typer(
     name="axon",
@@ -13,6 +13,7 @@ app = typer.Typer(
  
 app.add_typer(init.app, name="init", invoke_without_command=True)
 app.add_typer(token.app, name="token", invoke_without_command=True)
- 
+app.add_typer(add.app, name="add", invoke_without_command=True)
+
 if __name__ == "__main__":
     app()
