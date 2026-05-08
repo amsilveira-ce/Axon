@@ -85,10 +85,17 @@ def add_agent(
 
      # Marca o token como usado após persistir o resource com sucesso
     assert result.verified_token is not None
+
+
+
     try:
         mark_used(result.verified_token, resource.id)
     except Exception:
         console.print(warn("could not update token status in .axon/tokens.json"))
+
+
+    # Ping imediato pós-registro: GET agent card + fingerprint comparison
+    health = check_agent(resource)
  
     console.print(f"  {ok(f'[bold]{resource.name}[/bold] registered')}\n")
     console.print(info(f"id          [dim]{resource.id}[/dim]"))
@@ -97,4 +104,28 @@ def add_agent(
     console.print(info(f"fingerprint [dim]{resource.fingerprint}[/dim]"))
     console.print(info(f"status      [green]online[/green]"))
     console.print(info(f"saved to    [dim].axon/registry.json[/dim]"))
+    console.print()
+
+
+
+# ─── axon remove 
+ 
+remove_app = typer.Typer(help="Unregister a resource from the Gateway.")
+ 
+ 
+@remove_app.callback(invoke_without_command=True)
+def remove(
+    name: str = typer.Argument(..., help="Resource name"),
+) -> None:
+    """Unregister a resource from the Gateway."""
+    from axon.registry import remove_resource as _remove
+ 
+    removed = _remove(name)
+    if removed is None:
+        fatal(f"Resource '{name}' not found in registry.")
+ 
+    console.print()
+    console.print(f"  {ok(f'[bold]{name}[/bold] removed from registry')}")
+    console.print(info(f"type     [dim]{removed.type.value}[/dim]"))
+    console.print(info(f"endpoint [dim]{removed.endpoint}[/dim]"))
     console.print()
