@@ -35,10 +35,71 @@ class PAConfig(BaseModel):
     max_iterations: int = 10 
     cache: bool = True 
 
+class MCPConfig(BaseModel):
+    """
+    Configurações de segurança e isolamento para execução de tools MCP.
+ 
+    allowed_env_vars:
+        Whitelist de variáveis de ambiente que podem ser injetadas em
+        processos stdio. O executor rejeita silenciosamente qualquer
+        var declarada no manifesto que não esteja nessa lista.
+ 
+        Isso impede que um manifesto malicioso ou mal configurado
+        exponha variáveis sensíveis do ambiente do host (ex: AWS_SECRET,
+        HOME, PATH) para o processo MCP.
+ 
+        Adicione aqui apenas as vars que os seus MCPs realmente precisam.
+ 
+    stdio_timeout:
+        Tempo máximo (segundos) para o processo stdio responder a uma
+        chamada tools/call. Processos que excedem o timeout são encerrados.
+ 
+    http_timeout:
+        Tempo máximo (segundos) para requests HTTP a servidores MCP remotos.
+    """
+    allowed_env_vars: list[str] = Field(default_factory=list)
+    stdio_timeout:    int       = 30
+    http_timeout:     int       = 10
+
 class GAConfig(BaseModel):
-    port: int = 5000
-    # Diretório que guardamos os arquivos runtime - default config
-    registry_path: ClassVar[str] = ".axon/registry.json"
+    """
+    Configuração do Gateway Agent.
+ 
+    registry_path:        caminho do arquivo .axon/registry.json.
+    mcp:                  configurações de segurança para tools MCP.
+    registered_resources: referências leves aos recursos registrados.
+                          Atualizado automaticamente pelo axon add agent/mcp.
+                          Permite ao PA operator saber o que está disponível
+                          sem acesso direto ao registry.json do GA.
+    """
+    port:                 int              = 5000
+    registry_path:        str              = ".axon/registry.json"
+    mcp:                  MCPConfig        = Field(default_factory=MCPConfig)
+    registered_resources: list[ResourceRef] = Field(default_factory=list)
+
+class ResourceRef(BaseModel):
+    """
+    Referência leve a um recurso registrado no GA.
+ 
+    Persiste no axon.config.json para que o PA operator saiba quais
+    recursos existem no GA sem precisar ler o registry.json diretamente.
+ 
+    Em ambientes com múltiplos operadores (PA e GA separados), essa
+    referência é o que o PA operator consulta para saber o que está
+    disponível no GA que ele conectou.
+ 
+    resource_id:  id gerado no momento do registro (res-xxxxxx)
+    name:         nome do agente ou tool
+    type:         "agent" | "mcp"
+    endpoint:     URL do agente ou comando do stdio
+    registered_at: timestamp do registro
+    """
+    resource_id:   str
+    name:          str
+    type:          str
+    endpoint:      str
+    registered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 
 class AxonConfig(BaseModel):
     # Configuração do Axon básica envolve configurar o Principal Agent e Gateway Agent 

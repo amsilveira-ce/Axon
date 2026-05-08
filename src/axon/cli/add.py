@@ -28,6 +28,9 @@ def add_agent(
     The token must be present in the agent card under:
       capabilities.extensions[*].params["token"]
     """
+    from axon.health import check_agent
+    from axon.registry import update_resource_status
+    
     _validate_url(url)
  
     console.print(f"\n  {step(f'Validating agent at [cyan]{url}[/cyan]')}")
@@ -82,28 +85,94 @@ def add_agent(
         add_resource(resource)
     except Exception as e:
         fatal(f"Could not write to registry: {e}")
-
-     # Marca o token como usado após persistir o resource com sucesso
+ 
     assert result.verified_token is not None
-
-
-
     try:
         mark_used(result.verified_token, resource.id)
     except Exception:
         console.print(warn("could not update token status in .axon/tokens.json"))
-
-
+ 
     # Ping imediato pós-registro: GET agent card + fingerprint comparison
     health = check_agent(resource)
+    try:
+        update_resource_status(resource.id, health.status)
+    except Exception:
+        pass
+ 
+    if health.status == ResourceStatus.online:
+        console.print(f"  {step('health check     [green]online[/green] · fingerprint ok')}")
+    elif health.status == ResourceStatus.validating:
+        console.print(f"  {step('health check     [yellow]drift detected[/yellow] · agent card changed')}")
+        for line in (health.error or "").split("\n"):
+            console.print(f"  [dim]{line}[/dim]")
+    else:
+        console.print(f"  {step('health check     [red]offline[/red]')}")
+        console.print(f"  [dim]{health.error}[/dim]")
+ 
+    console.print(divider())
+    console.print()
  
     console.print(f"  {ok(f'[bold]{resource.name}[/bold] registered')}\n")
     console.print(info(f"id          [dim]{resource.id}[/dim]"))
     console.print(info(f"type        [dim]agent (A2A)[/dim]"))
     console.print(info(f"skills      [dim]{', '.join(s.id for s in resource.skills) or '—'}[/dim]"))
+    console.print(info(f"endpoint    [dim]{url}[/dim]"))
     console.print(info(f"fingerprint [dim]{resource.fingerprint}[/dim]"))
-    console.print(info(f"status      [green]online[/green]"))
+ 
+    status_display = {
+        ResourceStatus.online:     "[green]online[/green]",
+        ResourceStatus.validating: "[yellow]drift detected — re-register to update[/yellow]",
+        ResourceStatus.offline:    "[red]offline — agent unreachable after registration[/red]",
+    }.get(health.status, health.status.value)
+    console.print(info(f"status      {status_display}"))
     console.print(info(f"saved to    [dim].axon/registry.json[/dim]"))
+    console.print()
+ 
+    # Persiste referência leve no axon.config.json
+    from axon.config import patch_config, ResourceRef
+    from datetime import datetime, timezone
+    
+    ref = ResourceRef(
+        resource_id=resource.id,
+        name=resource.name,
+        type="agent",
+        endpoint=url,
+    )
+    patch_config(lambda cfg: cfg.model_copy(update={
+        "ga": cfg.ga.model_copy(update={
+            "registered_resources": [
+                r for r in cfg.ga.registered_resources
+                if r.name != resource.name   # evita duplicata por nome
+            ] + [ref]
+        })
+    }))
+ 
+    # Next steps — contexto do ambiente
+    is_local = axon_meta.registry_id == "local"
+    console.print(f"  [dim]next steps[/dim]")
+    if is_local:
+        console.print(info("[dim]axon pa gateway add <ga-url>[/dim]   connect this GA to a PA"))
+        console.print(info("[dim]axon ga resource list[/dim]           view all registered resources"))
+        console.print(info("[dim]axon ga resource ping --all[/dim]     verify resources are reachable"))
+    else:
+        console.print(info(f"[dim]registry  {axon_meta.registry_id}[/dim]"))
+        if axon_meta.registry_url:
+            console.print(info(f"[dim]verify at {axon_meta.registry_url}[/dim]"))
+        console.print(info("[dim]the Gateway operator controls discovery and access to this agent[/dim]"))
+        console.print(info("[dim]contact the Gateway provider for documentation on how PAs will invoke your agent[/dim]"))
+ 
+    # Aviso de expiração do token
+    from axon.tokens import read_store
+    store = read_store()
+    token_entry = next((t for t in store.tokens if t.used_by == resource.id), None)
+    if token_entry and token_entry.expires_at:
+        from datetime import datetime, timezone
+        remaining = token_entry.expires_at - datetime.now(timezone.utc)
+        hours = int(remaining.total_seconds() / 3600)
+        if hours < 24:
+            console.print()
+            console.print(warn(f"token expires in {hours}h — re-register before expiry to stay online"))
+ 
     console.print()
 
 
