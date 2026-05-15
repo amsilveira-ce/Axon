@@ -19,6 +19,16 @@ CONFIG_FILENAME = "axon.config.json"
 #   Modelos de configuração
 # ============================
 
+# Adicionar LLMConfig e atualizar PAConfig
+#
+# 1. Novo modelo — adicione antes de PAConfig:
+ 
+class LLMConfig(BaseModel):
+    host:    str = "http://localhost:11434"
+    model:   str = "llama3.2"
+    timeout: int = 300          # segundos por request
+ 
+
 # obs:Por serem models relacionados ao arquivo de configuração eles ficam aqui por hora 
 
 class GatewayEntry(BaseModel):
@@ -29,6 +39,7 @@ class GatewayEntry(BaseModel):
 
 class PAConfig(BaseModel):
     port: int = 4100
+    llm: LLMConfig = Field(default_factory=LLMConfig)
     default_mode: OperationalMode = OperationalMode.agent 
     default_reasoning_mode: ReasoningMode = ReasoningMode.react
     gateways: list[GatewayEntry] = Field(default_factory=list)
