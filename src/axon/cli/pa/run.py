@@ -5,7 +5,7 @@ from axon.cli._print import console, ok, fatal, divider, step
 app = typer.Typer(help="Run the Principal Agent.")
  
 
-@app.command("run")
+@app.callback(invoke_without_command=True)
 def run(
     query: str = typer.Option(..., "--query", "-q", help="Query to send to the Principal Agent"),
 ) -> None:
