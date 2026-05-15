@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Summarizer Agent")
 
-_AXON_TOKEN = "REPLACE_WITH_TOKEN"
+_AXON_TOKEN = "axon_tk_wlANuoCX1JFbXjgHV2RcF7WxiMKWZG3b"
 
 AGENT_CARD = {
     "name": "summarizer-agent",
