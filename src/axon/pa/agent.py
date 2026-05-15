@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from axon.config import PAConfig
+from axon.llms.ollama_client import OllamaClient
+from axon.pa.intent_extractor import IntentExtractor
+from axon.pa.models import ClarificationNeeded, IntentResult, Objective
 
 
 class PrincipalAgent:
     """
     Orquestrador central do Axon.
 
-    Recebe uma query em linguagem natural e coordena o ciclo completo:
-      1. IntentExtractor  — query → Objective | ClarificationNeeded
+    Coordena o ciclo completo:
+      1. IntentExtractor  — query → Objective | ClarificationNeeded  ✦ ativo
       2. Decomposer       — Objective → list[Subtask]
       3. Planner          — list[Subtask] → Plan (DAG)
       4. Resolver         — Plan + GatewayAgents → resource_pool
@@ -17,13 +20,34 @@ class PrincipalAgent:
 
     def __init__(self, config: PAConfig) -> None:
         self.config = config
-        # TODO: instanciar OllamaClient, IntentExtractor e demais componentes
+
+        client = OllamaClient(
+            host=config.llm.host,
+            model=config.llm.model,
+            timeout=config.llm.timeout,
+        )
+        self._intent_extractor = IntentExtractor(client)
 
     # ------------------------------------------------------------------
+    #   API pública
+    # ------------------------------------------------------------------
+
+    def extract_intent(self, query: str) -> IntentResult:
+        """
+        Expõe o passo 1 isolado — usado pelo chat interativo.
+
+        Args:
+            query: entrada bruta do usuário, podendo incluir contexto
+                   acumulado de rodadas anteriores de clarificação.
+
+        Returns:
+            Objective | ClarificationNeeded
+        """
+        return self._intent_extractor.extract(query)
 
     def run(self, query: str) -> str:
         """
-        Ponto de entrada síncrono.
+        Ponto de entrada síncrono para one-shot (axon pa run).
 
         Args:
             query: entrada bruta do usuário.
@@ -31,12 +55,12 @@ class PrincipalAgent:
         Returns:
             str — resposta final produzida pelo sistema.
         """
-        # 1. extrair intenção
-        # intent = self._intent_extractor.extract(query)
+        intent = self.extract_intent(query)
 
-        # 2. se ClarificationNeeded → retornar perguntas ao usuário
-        # if isinstance(intent, ClarificationNeeded):
-        #     return self._format_clarification(intent)
+        if isinstance(intent, ClarificationNeeded):
+            return self._format_clarification(intent)
+
+        assert isinstance(intent, Objective)
 
         # 3. decompor objetivo em subtarefas
         # subtasks = self._decomposer.decompose(intent)
@@ -53,4 +77,28 @@ class PrincipalAgent:
         # 7. retornar resposta final
         # return result.summary
 
-        return f"[PrincipalAgent] query recebida: {query!r}"
+        return self._format_objective(intent)
+
+    # ------------------------------------------------------------------
+    #   Formatters
+    # ------------------------------------------------------------------
+
+    def _format_clarification(self, intent: ClarificationNeeded) -> str:
+        lines = [f"Entendi: {intent.context}", ""]
+        for i, q in enumerate(intent.questions, 1):
+            lines.append(f"{i}. {q.question}")
+            lines.append(f"   (trecho: \"{q.ambiguous_span}\")")
+            if q.options:
+                lines.append(f"   opções: {', '.join(q.options)}")
+        return "\n".join(lines)
+
+    def _format_objective(self, intent: Objective) -> str:
+        lines = [
+            f"goal: {intent.goal}",
+            f"success: {intent.success_definition}",
+        ]
+        if intent.constraints:
+            lines.append(f"constraints: {', '.join(intent.constraints)}")
+        lines.append("")
+        lines.append("[decomposer não implementado — próximo passo]")
+        return "\n".join(lines)
