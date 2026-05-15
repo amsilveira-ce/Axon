@@ -6,17 +6,26 @@ from axon.cli._print import console, ok, info, warn, fatal, divider, step
 from axon.tokens import generate, list_tokens, TokenVerificationError, revoke
 
 
-app = typer.Typer(help="Manage Axon registration tokens.")
+app = typer.Typer(help="Create, inspect, and revoke Axon registration tokens.")
 
-@app.command("generate")
+@app.command(
+    "generate",
+    short_help="Create a single-use token for an A2A agent or MCP tool.",
+)
 def token_generate(
-    name: str = typer.Option(..., "--name", "-n", help="Name of the agent or MCP tool this token is for"),
+    name: str = typer.Option(
+        ...,
+        "--name",
+        "-n",
+        help="Agent or MCP tool name this token authorizes",
+    ),
 ) -> None:
     """
-    Generate a registration token for an agent or MCP tool.
- 
-    The token must be added to the resource before running 'axon add agent'
-    or 'axon add mcp'. Tokens are single-use by default.
+    Create a single-use registration token for an agent or MCP tool.
+
+    Use this before `axon add agent` or `axon add mcp`.
+    Add the generated token to the resource metadata so the Gateway can
+    verify it during registration.
     """
     try:
         token = generate(name)

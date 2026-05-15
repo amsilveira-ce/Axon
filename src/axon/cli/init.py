@@ -14,7 +14,14 @@ def init(
     """Create axon.config.json in the current directory."""
 
     if config_exists():
-        console.print(warn("axon.config.json already exists — delete it to re-initialize."))
+        console.print()
+        console.print(warn("[bold]Already initialized[/bold]"))
+        console.print()
+        console.print(f"  [dim]│[/dim]  [cyan]axon.config.json[/cyan] already exists in this directory.")
+        console.print(f"  [dim]│[/dim]  To start over, delete the file and run [bold]axon init[/bold] again:")
+        console.print()
+        console.print(f"  [dim]$[/dim]  [bold]rm axon.config.json[/bold]")
+        console.print()
         raise typer.Exit(1)
 
     console.print("\n  [bold]Axon[/bold] [dim]v0.1.0[/dim]\n")
