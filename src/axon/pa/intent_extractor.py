@@ -4,9 +4,16 @@ import json
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
-
+from axon.config import PAConfig
 from axon.llms.ollama_client import OllamaClient, OllamaError
 from axon.pa.models import ClarificationNeeded, Objective, ClarificationQuestion, IntentResult
+
+'''
+    system prompt 
+    output format 
+
+
+'''
 # ---------------------------------------------------------------------------
 #   Skill (prompt)
 # ---------------------------------------------------------------------------
@@ -34,12 +41,22 @@ class IntentExtractor:
     pa/skills/intent_extraction.md como system prompt.
     """
 
-    def __init__(self, client: OllamaClient) -> None:
-        self._client = client
+    def __init__(self, config: PAConfig) -> None:
+
+        self._client = OllamaClient(
+            host=config.llm.host,
+            model=config.llm.model,
+            timeout=config.llm.timeout,
+        )
         self._system = _load_skill()
 
 
-    def extract(self, query: str) -> IntentResult:
+    def extract(self, 
+            query: str, 
+            history:   str,
+            memory: str, 
+            resources: str
+            ) -> IntentResult:
         """
         Args:
             query: entrada bruta do usuário.
@@ -51,45 +68,17 @@ class IntentExtractor:
             OllamaError:    falha de comunicação com o servidor.
             ValueError:     LLM retornou JSON que não encaixa em nenhum schema.
         """
-        raw = self._client.chat(
-            messages=[
-                {"role": "system",  "content": self._system},
-                {"role": "user",    "content": query},
-            ],
-            temperature=0.0,
-            format="json",
-        )
+        raw = self._llm_extraxct(query, history, memory, resources)
 
-        return self._parse(raw, query)
 
-    # ------------------------------------------------------------------
-    #   Internals
-    # ------------------------------------------------------------------
-
-    def _parse(self, raw: str, query: str) -> IntentResult:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"LLM returned invalid JSON: {exc}\nRaw: {raw!r}") from exc
-
-        # Schema A: tem "goal" → Objective
-        if "goal" in data:
-            try:
-                return Objective.model_validate(data)
-            except ValidationError as exc:
-                raise ValueError(f"Failed to parse Objective: {exc}") from exc
-
-        # Schema B: tem "questions" → ClarificationNeeded
-        if "questions" in data:
-            try:
-                return ClarificationNeeded.model_validate(data)
-            except ValidationError as exc:
-                raise ValueError(f"Failed to parse ClarificationNeeded: {exc}") from exc
-
-        raise ValueError(
-            f"LLM response does not match Objective or ClarificationNeeded.\n"
-            f"Keys received: {list(data.keys())}\nQuery: {query!r}"
-        )
+        return 
+    
+    def _llm_extract(self,
+        query:     str,
+        history:   str | None,
+        memory:    str | None,
+        resources: str | None,
+        ) -> str:
 
 
 # ---------------------------------------------------------------------------
