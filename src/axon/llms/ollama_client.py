@@ -1,56 +1,61 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.request
 import urllib.error
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
+
+# ---------------------------------------------------------------------------
+#   Erros
+# ---------------------------------------------------------------------------
 
 class OllamaError(Exception):
-    """Base para todos os erros do cliente Ollama."""
-
-    def __init__(self, message: str, *, url: str | None = None) -> None:
-        super().__init__(message)
-        self.url = url
+    """Erro base do cliente Ollama."""
 
 
 class OllamaConnectionError(OllamaError):
-    """Servidor Ollama inacessível (rede, timeout, recusa de conexão)."""
+    """Servidor Ollama inacessível."""
 
 
 class OllamaResponseError(OllamaError):
-    """Resposta do Ollama inválida ou com formato inesperado."""
+    """Servidor respondeu com erro HTTP ou JSON inesperado."""
 
-    def __init__(
-        self,
-        message: str,
-        *,
-        url: str | None = None,
-        status_code: int | None = None,
-        body: str | None = None,
-    ) -> None:
-        super().__init__(message, url=url)
-        self.status_code = status_code
-        self.body = body
 
+class OllamaParseError(OllamaError):
+    """Resposta recebida mas não parseável após retries."""
+
+
+# ---------------------------------------------------------------------------
+#   Cliente
+# ---------------------------------------------------------------------------
 
 class OllamaClient:
     """
-    Cliente mínimo para a API Ollama.
+    Cliente mínimo para a API Ollama (stdlib apenas — sem dependências extras).
 
-    Usa apenas stdlib (urllib) — sem dependências extras.
-    Compatível com qualquer componente do Axon (PA, GA).
+    Suporta:
+      - generate()          → resposta completa (str)
+      - generate_stream()   → Iterator[str] chunks em tempo real
+      - chat()              → multi-turn com histórico
+      - is_available()      → bool
 
-    Uso:
-        client = OllamaClient(host="http://localhost:11434", model="llama3.2")
-        response = client.chat([{"role": "user", "content": "olá"}])
-        print(response)          # str com o conteúdo da resposta
+    Structured output:
+      Passe format=<dict>  → JSON Schema — constrange o modelo ao schema (mais robusto)
+      Passe format="json"  → JSON livre — modelo tenta produzir JSON válido
+      Passe format=None    → texto livre (reasoning models: use este + think=False)
+
+    Reasoning models (DeepSeek-R1, Qwen3):
+      think=True  → inclui <think> block no output
+      think=False → suprime <think>, retorna só a resposta final
     """
 
     def __init__(
         self,
-        host: str = "http://localhost:11434",
-        model: str = "llama3.2",
+        host:    str = "http://localhost:11434",
+        model:   str = "llama3.2",
         timeout: int = 60,
     ) -> None:
         self.host    = host.rstrip("/")
@@ -58,30 +63,74 @@ class OllamaClient:
         self.timeout = timeout
 
     # ------------------------------------------------------------------
-    #   API pública
+    #   generate — ponto de entrada principal para o IntentExtractor
+    # ------------------------------------------------------------------
+
+    def generate(
+        self,
+        prompt:      str,
+        *,
+        system:      str | None = None,
+        temperature: float = 0.0,
+        format:      str | dict | None = None,
+        think:       bool | None = None,
+        retries:     int = 2,
+        retry_delay: float = 1.0,
+    ) -> str:
+        """
+        /api/generate — prompt único, sem histórico.
+
+        Args:
+            prompt:      conteúdo do usuário
+            system:      system prompt opcional
+            temperature: 0.0 = determinístico
+            format:      None | "json" | dict (JSON Schema do Pydantic)
+                         dict é o mais robusto — constrange o modelo ao schema
+            think:       True/False para reasoning models (DeepSeek-R1, Qwen3)
+                         False suprime o <think> block do output
+                         None = não passa o parâmetro (default do modelo)
+            retries:     tentativas extras em caso de OllamaParseError
+            retry_delay: segundos entre tentativas
+
+        Returns:
+            str — conteúdo bruto da resposta
+
+        Raises:
+            OllamaConnectionError: servidor inacessível
+            OllamaResponseError:   resposta HTTP/JSON inesperada
+            OllamaParseError:      falha persistente de parse após retries
+        """
+        last_exc: Exception | None = None
+
+        for attempt in range(1 + retries):
+            try:
+                return self._generate_once(
+                    prompt, system=system, temperature=temperature,
+                    format=format, think=think,
+                )
+            except OllamaParseError as exc:
+                last_exc = exc
+                if attempt < retries:
+                    time.sleep(retry_delay)
+
+        raise last_exc  # type: ignore[misc]
+
+    # ------------------------------------------------------------------
+    #   chat — multi-turn com histórico
     # ------------------------------------------------------------------
 
     def chat(
         self,
-        messages: list[dict[str, str]],
+        messages:    list[dict[str, str]],
         *,
         temperature: float = 0.0,
-        format: str | None = "json",   # None → texto livre
+        format:      str | dict | None = None,
+        think:       bool | None = None,
     ) -> str:
         """
-        Envia uma lista de mensagens e retorna o conteúdo da resposta.
+        /api/chat — envia lista de mensagens e retorna conteúdo da resposta.
 
-        Args:
-            messages:    lista no formato [{"role": "...", "content": "..."}]
-            temperature: 0.0 = determinístico (padrão para extração estruturada)
-            format:      "json" força o modelo a responder JSON válido;
-                         None retorna texto livre.
-
-        Returns:
-            str — conteúdo bruto da resposta (JSON string ou texto).
-
-        Raises:
-            OllamaError: servidor indisponível ou resposta inesperada.
+        Usado pelo _Summarizer e outros componentes que mantêm histórico de turnos.
         """
         payload: dict[str, Any] = {
             "model":    self.model,
@@ -89,66 +138,83 @@ class OllamaClient:
             "stream":   False,
             "options":  {"temperature": temperature},
         }
-        if format == "json":
-            payload["format"] = "json"
+        if format is not None:
+            payload["format"] = format
+        if think is not None:
+            payload["think"] = think
 
-        return self._post("/api/chat", payload)
+        body = self._post("/api/chat", payload)
 
-    def generate(
-        self,
-        prompt: str,
-        *,
-        system: str | None = None,
-        temperature: float = 0.0,
-        format: str | None = "json",
-    ) -> str:
-        """
-        Endpoint /api/generate — útil para prompts sem histórico.
-        """
-        payload: dict[str, Any] = {
-            "model":  self.model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": temperature},
-        }
-        if system:
-            payload["system"] = system
-        if format == "json":
-            payload["format"] = "json"
+        if "message" in body:
+            return body["message"]["content"]
+        raise OllamaResponseError(
+            f"Unexpected /api/chat response shape: {list(body.keys())}"
+        )
 
-        return self._post("/api/generate", payload)
+    # ------------------------------------------------------------------
+    #   generate_stream — para UX em tempo real (resposta final ao usuário)
+    # ------------------------------------------------------------------
 
     def generate_stream(
         self,
-        prompt: str,
+        prompt:      str,
         *,
-        system: str | None = None,
+        system:      str | None = None,
         temperature: float = 0.0,
-        format: str | None = None,
+        format:      str | dict | None = None,
+        think:       bool | None = None,
     ) -> Iterator[str]:
         """
-        Versão streaming do /api/generate — yields cada chunk de texto
-        conforme o modelo produz tokens.
+        /api/generate com stream=True — yield de chunks de texto.
 
-        Uso:
-            for chunk in client.generate_stream(prompt, system=sys):
-                print(chunk, end="", flush=True)
+        Uso recomendado: exibição da resposta final do PA ao usuário.
+        NÃO usar para extração estruturada — use generate() para isso.
         """
         payload: dict[str, Any] = {
-            "model":  self.model,
-            "prompt": prompt,
-            "stream": True,
+            "model":   self.model,
+            "prompt":  prompt,
+            "stream":  True,
             "options": {"temperature": temperature},
         }
         if system:
             payload["system"] = system
-        if format == "json":
-            payload["format"] = "json"
+        if format is not None:
+            payload["format"] = format
+        if think is not None:
+            payload["think"] = think
 
-        yield from self._post_stream("/api/generate", payload, field="response")
+        url  = f"{self.host}/api/generate"
+        data = json.dumps(payload).encode()
+        req  = urllib.request.Request(
+            url, data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                for line in resp:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if "response" in chunk:
+                        yield chunk["response"]
+                    if chunk.get("done"):
+                        break
+        except urllib.error.URLError as exc:
+            raise OllamaConnectionError(
+                f"Ollama unavailable at {self.host}: {exc}"
+            ) from exc
+
+    # ------------------------------------------------------------------
+    #   helpers
+    # ------------------------------------------------------------------
 
     def is_available(self) -> bool:
-        """Retorna True se o servidor Ollama está respondendo."""
         try:
             req = urllib.request.Request(f"{self.host}/api/tags")
             with urllib.request.urlopen(req, timeout=5):
@@ -156,90 +222,52 @@ class OllamaClient:
         except Exception:
             return False
 
-    # ------------------------------------------------------------------
-    #   Internals
-    # ------------------------------------------------------------------
+    def _generate_once(
+        self,
+        prompt:      str,
+        *,
+        system:      str | None,
+        temperature: float,
+        format:      str | dict | None,
+        think:       bool | None,
+    ) -> str:
+        payload: dict[str, Any] = {
+            "model":   self.model,
+            "prompt":  prompt,
+            "stream":  False,
+            "options": {"temperature": temperature},
+        }
+        if system:
+            payload["system"] = system
+        if format is not None:
+            payload["format"] = format
+        if think is not None:
+            payload["think"] = think
 
-    def _post(self, path: str, payload: dict[str, Any]) -> str:
+        body = self._post("/api/generate", payload)
+
+        if "response" not in body:
+            raise OllamaResponseError(
+                f"Unexpected /api/generate response shape: {list(body.keys())}"
+            )
+        return body["response"]
+
+    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url  = f"{self.host}{path}"
         data = json.dumps(payload).encode()
         req  = urllib.request.Request(
-            url,
-            data=data,
+            url, data=data,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                body = json.loads(resp.read().decode())
-        except urllib.error.HTTPError as exc:
-            raise OllamaResponseError(
-                f"Ollama returned HTTP {exc.code} {exc.reason}",
-                url=url,
-                status_code=exc.code,
-            ) from exc
+                return json.loads(resp.read().decode())
         except urllib.error.URLError as exc:
             raise OllamaConnectionError(
-                f"Ollama unreachable at {self.host}: {exc.reason}", url=url
+                f"Ollama unavailable at {self.host}: {exc}"
             ) from exc
         except json.JSONDecodeError as exc:
             raise OllamaResponseError(
-                f"Invalid JSON from Ollama: {exc}", url=url
-            ) from exc
-
-        # /api/chat  → body["message"]["content"]
-        # /api/generate → body["response"]
-        if "message" in body:
-            return body["message"]["content"]
-        if "response" in body:
-            return body["response"]
-
-        raise OllamaResponseError(
-            f"Unexpected Ollama response shape: {list(body.keys())}", url=url
-        )
-
-    def _post_stream(
-        self,
-        path: str,
-        payload: dict[str, Any],
-        *,
-        field: str,
-    ) -> Iterator[str]:
-        url  = f"{self.host}{path}"
-        data = json.dumps(payload).encode()
-        req  = urllib.request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                for line in resp:
-                    if not line:
-                        continue
-                    try:
-                        chunk = json.loads(line.decode())
-                    except json.JSONDecodeError:
-                        continue
-                    if chunk.get("error"):
-                        raise OllamaResponseError(
-                            f"Ollama stream error: {chunk['error']}", url=url
-                        )
-                    piece = chunk.get(field) or (
-                        chunk.get("message", {}).get("content") if field == "message" else None
-                    )
-                    if piece:
-                        yield piece
-                    if chunk.get("done"):
-                        break
-        except urllib.error.HTTPError as exc:
-            raise OllamaResponseError(
-                f"Ollama returned HTTP {exc.code} {exc.reason}",
-                url=url,
-                status_code=exc.code,
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise OllamaConnectionError(
-                f"Ollama unreachable at {self.host}: {exc.reason}", url=url
+                f"Invalid JSON from Ollama: {exc}"
             ) from exc
