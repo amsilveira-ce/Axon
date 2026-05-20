@@ -24,9 +24,10 @@ CONFIG_FILENAME = "axon.config.json"
 # 1. Novo modelo — adicione antes de PAConfig:
  
 class LLMConfig(BaseModel):
-    host:    str = "http://localhost:11434"
-    model:   str = "llama3.2"
-    timeout: int = 300          # segundos por request
+    host:        str   = "http://localhost:11434"
+    model:       str   = "llama3.2"
+    timeout:     int   = 300    # segundos por request
+    temperature: float = 0.0
  
 
 # obs:Por serem models relacionados ao arquivo de configuração eles ficam aqui por hora 

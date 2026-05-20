@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import urllib.request
 import urllib.error
-from typing import Any
+from typing import Any, Iterator
 
 
 class OllamaError(Exception):
@@ -118,6 +118,35 @@ class OllamaClient:
 
         return self._post("/api/generate", payload)
 
+    def generate_stream(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        temperature: float = 0.0,
+        format: str | None = None,
+    ) -> Iterator[str]:
+        """
+        Versão streaming do /api/generate — yields cada chunk de texto
+        conforme o modelo produz tokens.
+
+        Uso:
+            for chunk in client.generate_stream(prompt, system=sys):
+                print(chunk, end="", flush=True)
+        """
+        payload: dict[str, Any] = {
+            "model":  self.model,
+            "prompt": prompt,
+            "stream": True,
+            "options": {"temperature": temperature},
+        }
+        if system:
+            payload["system"] = system
+        if format == "json":
+            payload["format"] = "json"
+
+        yield from self._post_stream("/api/generate", payload, field="response")
+
     def is_available(self) -> bool:
         """Retorna True se o servidor Ollama está respondendo."""
         try:
@@ -168,3 +197,49 @@ class OllamaClient:
         raise OllamaResponseError(
             f"Unexpected Ollama response shape: {list(body.keys())}", url=url
         )
+
+    def _post_stream(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        field: str,
+    ) -> Iterator[str]:
+        url  = f"{self.host}{path}"
+        data = json.dumps(payload).encode()
+        req  = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                for line in resp:
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line.decode())
+                    except json.JSONDecodeError:
+                        continue
+                    if chunk.get("error"):
+                        raise OllamaResponseError(
+                            f"Ollama stream error: {chunk['error']}", url=url
+                        )
+                    piece = chunk.get(field) or (
+                        chunk.get("message", {}).get("content") if field == "message" else None
+                    )
+                    if piece:
+                        yield piece
+                    if chunk.get("done"):
+                        break
+        except urllib.error.HTTPError as exc:
+            raise OllamaResponseError(
+                f"Ollama returned HTTP {exc.code} {exc.reason}",
+                url=url,
+                status_code=exc.code,
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise OllamaConnectionError(
+                f"Ollama unreachable at {self.host}: {exc.reason}", url=url
+            ) from exc
