@@ -126,7 +126,7 @@ class PromptAssembler:
     def _render_history(self, history: ConversationHistory | None) -> str:
         if history is None or history.is_empty():
             return ""
-        return history.get_context()
+        return history.get_context_str()
 
     def _render_memory(self, memory: MemoryBank | None) -> str:
         if memory is None or memory.is_empty():

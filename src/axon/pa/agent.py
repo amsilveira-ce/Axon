@@ -6,8 +6,9 @@ from pathlib import Path
 from axon.config import PAConfig
 from axon.llms.ollama_client import OllamaClient
 from axon.pa.context.conversation import ConversationHistory
+from axon.pa.local_pool import LocalResourcePool
 from axon.pa.context.memory import MemoryBank
-from axon.pa.intent_extractor import IntentExtractor
+from axon.pa.intent_extractor import IntentExtractor, ExtractionTrace
 from axon.pa.models import ClarificationNeeded, Objective
 
 logger = logging.getLogger(__name__)
@@ -49,12 +50,18 @@ class PrincipalAgent:
         )
 
         self._intent_extractor = IntentExtractor(config)
+        self.last_trace: ExtractionTrace | None = None
         
 
         # context layer — paths resolvidos pelo caller (api.py / cli)
         # ou derivados do cwd como fallback
         self._sessions_dir = sessions_dir or _default_sessions_dir()
         self._memory_path  = memory_path  or _default_memory_path()
+
+        # LocalResourcePool — tools locais, carregadas no startup
+        local_tools_path  = (sessions_dir.parent / 'local_tools.json') if sessions_dir else _default_local_tools_path()
+        self._local_pool  = LocalResourcePool.load(local_tools_path)
+        logger.info('[PA] local pool loaded — %d tools', len(self._local_pool))
 
         # MemoryBank — carregado uma vez no startup, persiste entre sessões
         self._memory = MemoryBank.load_or_create(self._memory_path)
@@ -87,11 +94,14 @@ class PrincipalAgent:
         Extrai intenção passando contexto real de memória e histórico.
         Usado pelo chat interativo — não registra o turno no histórico.
         """
-        return self._intent_extractor.extract(
+        intent, trace = self._intent_extractor.extract(
             query,
             history=self._history,
             memory=self._memory,
+            resources=self._local_pool.get_capabilities(),
         )
+        self.last_trace = trace
+        return intent
 
     def run(self, query: str) -> str:
         """
@@ -110,11 +120,13 @@ class PrincipalAgent:
             "user", query, llm_client=self._llm_client
         )
 
-        intent = self._intent_extractor.extract(
+        intent, trace = self._intent_extractor.extract(
             query,
             history=self._history,
             memory=self._memory,
+            resources=self._local_pool.get_capabilities(),
         )
+        self.last_trace = trace
 
         if intent.clarification is not None:
             response = self._format_clarification(intent.clarification)
@@ -216,3 +228,11 @@ def _default_memory_path() -> Path:
         return paths().pa_memory_bank
     except Exception:
         return Path(".axon/pa/memory_bank.json")
+
+
+def _default_local_tools_path() -> Path:
+    try:
+        from axon.config import paths
+        return paths().pa_local_tools
+    except Exception:
+        return Path(".axon/pa/local_tools.json")

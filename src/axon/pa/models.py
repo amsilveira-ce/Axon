@@ -51,3 +51,27 @@ class Objective(BaseModel):
 
 # Alias para compatibilidade com agent.py e chat.py
 IntentResult = Objective
+
+
+# ---------------------------------------------------------------------------
+#   ExtractionTrace — resultado + contexto injetado
+# ---------------------------------------------------------------------------
+
+class ExtractionTrace:
+    """
+    Carrega o contexto que foi injetado no prompt e o resultado.
+    Usado pelo --verbose no CLI para mostrar o que o PA está vendo.
+    """
+    def __init__(
+        self,
+        objective: "Objective",
+        context:   str,
+        history_str:   str,
+        memory_str:    str,
+        resources_str: str,
+    ) -> None:
+        self.objective     = objective
+        self.context       = context
+        self.history_str   = history_str
+        self.memory_str    = memory_str
+        self.resources_str = resources_str

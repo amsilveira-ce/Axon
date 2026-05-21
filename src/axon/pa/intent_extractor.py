@@ -20,17 +20,16 @@ import re
 from pathlib import Path
 
 from pydantic import ValidationError
-
 from axon.config import PAConfig, LLMConfig
 from axon.llms.ollama_client import OllamaClient, OllamaConnectionError, OllamaParseError
 from axon.pa.context.assembler import PromptAssembler
 from axon.pa.context.conversation import ConversationHistory
 from axon.pa.context.memory import MemoryBank
-from axon.pa.models import Constraint, Objective, ClarificationNeeded, ClarificationQuestion
+from axon.pa.models import Constraint, Objective, ClarificationNeeded, ClarificationQuestion, ExtractionTrace
 
 logger = logging.getLogger(__name__)
 
-# ── Skill ─────────────────────────────────────────────────────────────────────
+# ── Skills 
 
 _SKILL_PATH  = Path(__file__).parent / "skills" / "intent_extraction.md"
 _DOMAINS_DIR = Path(__file__).parent / "skills" / "domains"
@@ -51,11 +50,7 @@ def _load_behavior(domain: str | None = None) -> str:
     return f"{base}\n\n--- Domain Context ---\n{extension}"
 
 
-# ── Output contract — hardcoded 
-# Ao inves de deixar tudo orgnizado no .md mantemos a estrutura mais importante para que o Axon funcione
-# harcoded aqui, no caso o output; Já que o controle inteno é feito através dos objetos Objective| ClarificationNeeded 
-
-# Nos testes o <think> não está funcionando direto 
+# ── Output contract — hardcoded ───────────────────────────────────────────────
 
 _OUTPUT_CONTRACT = """
 ---
@@ -134,7 +129,6 @@ class IntentExtractor:
         )
         domain        = getattr(config.intent_extractor, "domain", None)
         behavior      = _load_behavior(domain)
-
         self._system  = _build_prompt(behavior)
         self._schema  = _objective_schema()
         self._assembler = PromptAssembler(config.conversation)
@@ -151,26 +145,36 @@ class IntentExtractor:
         history:   ConversationHistory | None = None,
         memory:    MemoryBank | None          = None,
         resources: list[str] | None           = None,
-    ) -> Objective:
+    ) -> tuple["Objective", ExtractionTrace]:
         """
-        Extrai a intenção da query e retorna um Objective.
+        Extrai a intenção da query.
 
-        Args:
-            query:     query do usuário em inglês
-            history:   ConversationHistory da sessão atual
-            memory:    MemoryBank cross-session
-            resources: lista de capability tags disponíveis
+        Returns:
+            (Objective, ExtractionTrace) — resultado + contexto injetado
         """
-        
+        # monta contexto e guarda as partes para o trace
+        history_str   = self._assembler._render_history(history)
+        memory_str    = self._assembler._render_memory(memory)
+        resources_str = self._assembler._render_resources(resources)
+
         context = self._assembler.build(
             query,
             history=history,
             memory=memory,
             resources=resources,
         )
+        raw       = self._llm_extract(context)
+        objective = self._parse(query, raw)
+        trace     = ExtractionTrace(
+            objective=objective,
+            context=context,
+            history_str=history_str,
+            memory_str=memory_str,
+            resources_str=resources_str,
+        )
+        return objective, trace
 
-        raw = self._llm_extract(context)
-        return self._parse(query, raw)
+    # ── LLM ──────────────────────────────────────────────────────────────────
 
     def _llm_extract(self, context: str) -> str:
         try:
@@ -192,6 +196,7 @@ class IntentExtractor:
             logger.error("[IntentExtractor] parse error after retries: %s", e)
             raise
 
+    # ── Parse ─────────────────────────────────────────────────────────────────
 
     def _parse(self, query: str, raw: str) -> Objective:
         json_str = (
@@ -251,7 +256,7 @@ class IntentExtractor:
             return _fallback_objective(query)
 
 
-# ── Parse helpers - para parser saida da llm 
+# ── Parse helpers ─────────────────────────────────────────────────────────────
 
 def _try_direct(text: str) -> str | None:
     stripped = text.strip()
@@ -331,7 +336,7 @@ def _fallback_objective(query: str) -> Objective:
     )
 
 
-# teste local - rodar esse arquivo como main 
+# ── Testes ────────────────────────────────────────────────────────────────────
 
 def _run_tests(
     host:   str        = "http://localhost:11434",

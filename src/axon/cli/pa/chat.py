@@ -13,6 +13,7 @@ _MAX_CLARIFICATION_ROUNDS = 3
 def chat(
     session_id: str | None = typer.Option(None, "--session", "-s", help="Session ID to resume."),
     lang:       str | None = typer.Option(None, "--lang", "-l", help="Respond in this language."),
+    verbose:    bool       = typer.Option(False, "--verbose", "-v", help="Show context injected into the LLM and extraction details."),
 ) -> None:
     """Inicia uma sessão interativa com o Principal Agent."""
     from axon.config import read_config, paths
@@ -37,6 +38,8 @@ def chat(
     console.print(info(f"[dim]session: {agent.session_id}[/dim]"))
     if lang:
         console.print(info(f"[dim]lang:    {lang}[/dim]"))
+    if verbose:
+        console.print(info(f"[dim]verbose: on[/dim]"))
     console.print()
 
     # ── query inicial ──────────────────────────────────────────────────
@@ -57,6 +60,11 @@ def chat(
             intent = agent.extract_intent(query)
         except Exception as exc:
             fatal(f"Agent error: {exc}")
+
+        # ── verbose: mostra contexto injetado + resultado da extração ──
+        if verbose and agent.last_trace:
+            from axon.cli.pa._trace import print_trace
+            print_trace(agent.last_trace)
 
         # ── Objective → encerra ────────────────────────────────────────
         if intent.clarification is None:
@@ -100,13 +108,9 @@ def chat(
 
         answer = _translate(raw_answer, "English", agent) if lang else raw_answer
 
-        # registra a pergunta do assistente e a resposta do usuário no histórico
-        # assim o extractor vê o contexto completo na próxima rodada
         agent._history.add_message("assistant", clar.context, llm_client=agent._llm_client)
         agent._history.add_message("user", answer, llm_client=agent._llm_client)
 
-        # próxima rodada usa só a nova resposta como query —
-        # o histórico já carrega o contexto completo
         query = answer
 
 
