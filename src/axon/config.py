@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 from pydantic import BaseModel, Field
 
@@ -126,6 +126,21 @@ class LLMConfig(BaseModel):
     host:    str = "http://localhost:11434"
     model:   str = "deepseek-r1:14b"    # Deixar como default um modelo com reasoning
     timeout: int = 60
+
+
+
+# Discussão de se isso é realmente necessário ..... 
+class ConversationConfig(BaseModel):
+    """
+    Configuração da janela deslizante do ConversationHistory.
+
+    max_messages — quantas mensagens a janela mantém antes de sumarizar/descartar.
+    window_mode  — critério da janela: "messages" (contagem de turnos) ou
+                   "tokens" (orçamento de tokens, reservado para uso futuro).
+    """
+
+    max_messages: int                          = 10
+    window_mode:  Literal["messages", "tokens"] = "messages"
 
 
 class PAConfig(BaseModel):
