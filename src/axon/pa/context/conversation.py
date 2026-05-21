@@ -22,9 +22,12 @@ from pydantic import BaseModel, Field
 from axon.config import ConversationConfig
 
 
-# Lógica relacionado ao processo de resumo quando estoura a context window da conversa 
+# Lógica relacionado ao processo de resumo quando estoura a context window da conversa
 # ============================
 _SUMMARIZER_SKILL = Path(__file__).parent / "skills" / "summarizer.md"
+
+# Prefixo usado para marcar o resumo acumulado dentro do contexto.
+_SUMMARY_HEADER = "[Summary of earlier conversation]"
  
  
 def _load_summarizer_prompt() -> str:
@@ -120,16 +123,33 @@ class ConversationHistory(BaseModel):
 
 
     def get_context(self) -> list[dict[str, str]]:
-
-        result = []
+        """Histórico no formato OpenAI Chat — o summary entra como system message."""
+        result: list[dict[str, str]] = []
 
         if self.summary:
-            result.append({"role": "system", "content": self.summary})
-            
+            result.append({
+                "role":    "system",
+                "content": f"{_SUMMARY_HEADER}\n{self.summary}",
+            })
+
         result += [m.to_openai() for m in self.messages]
         return result
- 
- 
+
+    def get_context_str(self) -> str:
+        """
+        Histórico como texto plano — para prompts que não usam o formato chat
+        (ex.: o IntentExtractor, que recebe history como string).
+        """
+        if self.is_empty():
+            return "No previous conversation."
+
+        lines: list[str] = []
+        if self.summary:
+            lines.append(f"{_SUMMARY_HEADER}\n{self.summary}")
+        lines += [f"{m.role}: {m.content}" for m in self.messages]
+        return "\n".join(lines)
+
+
     def is_empty(self) -> bool:
         return not self.messages and not self.summary
  

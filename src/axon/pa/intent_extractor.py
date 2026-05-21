@@ -1,25 +1,15 @@
 """
 pa/intent_extractor.py — Primeira etapa do pipeline do Principal Agent.
 
-Responsabilidade:
-  Transformar uma query em linguagem natural em um Objective estruturado.
-  O Objective é sempre produzido — quando a query está incompleta,
-  o campo clarification é preenchido com perguntas ao usuário.
+Separação de responsabilidades:
+  pa/skills/intent_extraction.md  → BEHAVIOR (operador edita livremente)
+  intent_extractor.py             → OUTPUT_CONTRACT + lógica de extração
+  pa/context/assembler.py         → CONTEXT_TEMPLATE + budget de tokens
 
-Idioma:
-  Detecta o idioma da query via langdetect e injeta no system prompt
-  como primeira instrução — antes de qualquer outra coisa.
-  Isso garante que goal, clarification e todos os campos do JSON
-  saiam no mesmo idioma da query, independente do modelo ou do prompt.
-
-Structured output:
-  Passa o JSON Schema do Objective no format= do Ollama.
-  think=False suprime o <think> block em reasoning models.
-  Parse em cascata com 5 níveis de fallback.
-
-Skill:
-  pa/skills/intent_extraction.md — system prompt e context template.
-  O placeholder {language} no topo do prompt é preenchido em runtime.
+Fluxo:
+  PromptAssembler.build()  → contexto formatado com budget
+  _llm_extract()           → generate() com JSON Schema do Objective
+  _parse()                 → parse em cascata com fallback robusto
 """
 
 from __future__ import annotations
@@ -31,115 +21,107 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from axon.llms.ollama_client import OllamaClient, OllamaConnectionError, OllamaError, OllamaParseError
 from axon.config import PAConfig, LLMConfig
+from axon.llms.ollama_client import OllamaClient, OllamaConnectionError, OllamaParseError
+from axon.pa.context.assembler import PromptAssembler
+from axon.pa.context.conversation import ConversationHistory
+from axon.pa.context.memory import MemoryBank
 from axon.pa.models import Constraint, Objective, ClarificationNeeded, ClarificationQuestion
 
 logger = logging.getLogger(__name__)
 
-# ── Detecção de idioma ────────────────────────────────────────────────────────
-
-# Mapa langdetect → nome legível pelo LLM
-_LANG_NAMES: dict[str, str] = {
-    "pt": "Portuguese",
-    "en": "English",
-    "es": "Spanish",
-    "fr": "French",
-    "de": "German",
-    "it": "Italian",
-    "zh-cn": "Chinese",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "ar": "Arabic",
-}
-
-_MIN_QUERY_LENGTH = 8   # queries menores que isso são instáveis para detecção
-
-
-def detect_language(text: str) -> str:
-    """
-    Detecta o idioma do texto e retorna o nome legível pelo LLM.
-
-    Fallback para "English" quando:
-      - langdetect não está instalado
-      - texto muito curto (instável)
-      - código de idioma não mapeado
-    """
-    if len(text.strip()) < _MIN_QUERY_LENGTH:
-        return "English"
-
-    try:
-        # usando langdetect para manter consistência da saida utilizada pela llm 
-        from langdetect import detect, DetectorFactory
-        DetectorFactory.seed = 0   # resultado determinístico
-        code = detect(text)
-        return _LANG_NAMES.get(code, "English")
-    
-    except Exception:
-        return "English"
-
-
 # ── Skill ─────────────────────────────────────────────────────────────────────
 
-_SKILL_PATH = Path(__file__).parent / "skills" / "intent_extraction.md"
+_SKILL_PATH  = Path(__file__).parent / "skills" / "intent_extraction.md"
+_DOMAINS_DIR = Path(__file__).parent / "skills" / "domains"
 
 
-def _load_skill() -> tuple[str, str]:
-    """
-    Carrega pa/skills/intent_extraction.md.
-    Retorna (system_prompt_template, context_template).
-    As duas seções são separadas por linha '---'.
-    O system_prompt_template contém {language} para injeção em runtime.
-    """
-    raw = _SKILL_PATH.read_text(encoding="utf-8")
-    parts = raw.split("\n---\n", maxsplit=1)
-    if len(parts) != 2:
-        raise ValueError(
-            f"intent_extraction.md deve ter duas seções separadas por '---'. "
-            f"Seções encontradas: {len(parts)}"
+def _load_behavior(domain: str | None = None) -> str:
+    base = _SKILL_PATH.read_text(encoding="utf-8").strip()
+    if domain is None:
+        return base
+    domain_path = _DOMAINS_DIR / f"{domain}.md"
+    if not domain_path.exists():
+        raise FileNotFoundError(
+            f"Domain skill not found: {domain_path}\n"
+            f"Create pa/skills/domains/{domain}.md to define this domain."
         )
-    system_prompt_template = parts[0].strip()
-    context_template       = parts[1].strip()
-
-    # remove cabeçalho "# Context Template" se presente
-    lines = context_template.splitlines()
-    if lines and lines[0].startswith("#"):
-        context_template = "\n".join(lines[1:]).strip()
-
-    return system_prompt_template, context_template
+    extension = domain_path.read_text(encoding="utf-8").strip()
+    logger.info("[IntentExtractor] domain loaded: %s", domain)
+    return f"{base}\n\n--- Domain Context ---\n{extension}"
 
 
-# ── JSON Schema do Objective ──────────────────────────────────────────────────
+# ── Output contract — hardcoded 
+# Ao inves de deixar tudo orgnizado no .md mantemos a estrutura mais importante para que o Axon funcione
+# harcoded aqui, no caso o output; Já que o controle inteno é feito através dos objetos Objective| ClarificationNeeded 
+
+# Nos testes o <think> não está funcionando direto 
+
+_OUTPUT_CONTRACT = """
+---
+
+Always produce exactly two blocks in your response:
+
+BLOCK 1 — Reasoning
+<think>
+Your step-by-step reasoning about the query.
+</think>
+
+BLOCK 2 — Structured output
+<output>
+{
+  "goal": "<verb + object + context — full phrase, not just a verb>",
+  "constraints": [
+    {"value": "<constraint>", "type": "<temporal|size|policy|format>", "implicit": false, "source": "<phrase from query>"}
+  ],
+  "success_definition": "<verifiable condition that means the task is complete>",
+  "capability_hints": ["<capability_tag>"],
+  "extracted_inputs": {"<slot>": "<value explicitly stated in query>"},
+  "assumptions": ["<default from memory or context — never invented>"],
+  "clarification": null
+}
+</output>
+
+When clarification is needed, replace clarification null with:
+{
+  "context": "<one sentence: what you already understood>",
+  "questions": [
+    {
+      "question": "<specific question targeting one missing piece>",
+      "ambiguous_span": "<exact phrase from query that triggered this>",
+      "options": ["<opt1>", "<opt2>"] or null
+    }
+  ]
+}
+
+Output rules (enforced by parser — do not change):
+- Always produce both <think> and <output> blocks.
+- goal: full phrase. WRONG: "create". RIGHT: "create 5-slide pitch deck about Q3 for investors".
+- constraints: only restrictions on HOW to execute. Do NOT copy extracted_inputs here.
+- extracted_inputs: only information explicitly stated in the query.
+- assumptions: only defaults from Memory or context. Never invent.
+- clarification null = proceed. clarification filled = needs user input.
+- Do not ask about information that Available Resources can retrieve autonomously.
+""".strip()
+
+
+def _build_prompt(behavior: str) -> str:
+    return f"{behavior}\n\n{_OUTPUT_CONTRACT}"
+
 
 def _objective_schema() -> dict:
     return Objective.model_json_schema()
 
 
-# ── Contexto simulado para testes ─────────────────────────────────────────────
-
-SIMULATED_HISTORY = "No previous conversation."
-
-SIMULATED_MEMORY = """
-- preferred_report_format: PDF
-- data_source: HStory electronic health record system (Hospital Einstein)
-- language: Portuguese (Brazil)
-- patient_data_always_available: true
-""".strip()
-
-SIMULATED_RESOURCES = """
-- health_search: searches patient data from HStory EHR (capability: patient_data_retrieval)
-- healthcare_agent: analyzes clinical data and produces diagnoses (capability: clinical_analysis)
-- content_creator: generates formatted documents and reports (capability: report_generation)
-- resend: sends emails to medical staff (capability: email_delivery)
-- notion: persists documents to workspace (capability: document_storage)
-""".strip()
-
-
-# ── IntentExtractor ───────────────────────────────────────────────────────────
+# ── IntentExtractor 
 
 class IntentExtractor:
     """
-    Produz sempre um Objective.
+    Produz sempre um Objective. Opera em inglês.
+
+    O contexto é montado pelo PromptAssembler — que gerencia o budget
+    de tokens entre history, memory e resources.
+
     objective.clarification is None     → completo, vai para o Decomposer
     objective.clarification is not None → incompleto, pergunta ao usuário
     """
@@ -150,79 +132,68 @@ class IntentExtractor:
             model=config.llm.model,
             timeout=config.llm.timeout,
         )
-        self._system_prompt_template, self._context_template = _load_skill()
-        self._schema = _objective_schema()
+        domain        = getattr(config.intent_extractor, "domain", None)
+        behavior      = _load_behavior(domain)
+
+        self._system  = _build_prompt(behavior)
+        self._schema  = _objective_schema()
+        self._assembler = PromptAssembler(config.conversation)
+
+        logger.debug(
+            "[IntentExtractor] initialized — model=%s domain=%s",
+            config.llm.model,
+            domain,
+        )
 
     def extract(
         self,
         query:     str,
-        history:   str | None = None,
-        memory:    str | None = None,
-        resources: str | None = None,
+        history:   ConversationHistory | None = None,
+        memory:    MemoryBank | None          = None,
+        resources: list[str] | None           = None,
     ) -> Objective:
         """
         Extrai a intenção da query e retorna um Objective.
 
         Args:
-            query:     query do usuário em linguagem natural
-            history:   ConversationHistory.get_context() (ou None → simulado)
-            memory:    MemoryBank.get_summary() (ou None → simulado)
-            resources: resource_pool serializado (ou None → simulado)
+            query:     query do usuário em inglês
+            history:   ConversationHistory da sessão atual
+            memory:    MemoryBank cross-session
+            resources: lista de capability tags disponíveis
         """
-        raw = self._llm_extract(query, history, memory, resources)
-        return self._parse(query, raw)
-
-
-    def _llm_extract(
-        self,
-        query:     str,
-        history:   str | None,
-        memory:    str | None,
-        resources: str | None,
-    ) -> str:
-        # detecta idioma e monta system prompt com idioma no topo
-        # usa replace() em vez de format() — o template contém chaves literais
-        # nos exemplos de JSON que format() interpretaria como campos
-        language      = detect_language(query)
-        system_prompt = self._system_prompt_template.replace("{language}", language)
-
-        logger.debug("[IntentExtractor] detected language: %s", language)
-
-        context = self._context_template.format(
-            history=history     or SIMULATED_HISTORY,
-            memory=memory       or SIMULATED_MEMORY,
-            resources=resources or SIMULATED_RESOURCES,
-            query=query,
+        
+        context = self._assembler.build(
+            query,
+            history=history,
+            memory=memory,
+            resources=resources,
         )
 
+        raw = self._llm_extract(context)
+        return self._parse(query, raw)
+
+    def _llm_extract(self, context: str) -> str:
         try:
             raw = self._client.generate(
                 context,
-                system=system_prompt,
+                system=self._system,
                 temperature=0.0,
                 format=self._schema,
                 think=False,
                 retries=2,
             )
-            logger.debug("[IntentExtractor] raw response:\n%s", raw)
+            logger.debug("[IntentExtractor] raw:\n%s", raw)
             return raw
 
         except OllamaConnectionError:
             logger.error("[IntentExtractor] LLM unreachable")
             raise
         except OllamaParseError as e:
-            logger.error("[IntentExtractor] LLM parse error after retries: %s", e)
+            logger.error("[IntentExtractor] parse error after retries: %s", e)
             raise
 
+
     def _parse(self, query: str, raw: str) -> Objective:
-        """
-        Parse em cascata:
-          1. json.loads() direto    → json_schema mode funcionou
-          2. <output>...</output>   → reasoning model com think=True
-          3. ```json ... ```        → modelo formatou em markdown
-          4. bare JSON balanceado   → JSON solto no texto
-          5. fallback               → pede reformulação
-        """
         json_str = (
             _try_direct(raw)
             or _extract_tag(raw, "output")
@@ -231,7 +202,7 @@ class IntentExtractor:
         )
 
         if not json_str:
-            logger.warning("[IntentExtractor] Could not extract JSON — using fallback")
+            logger.warning("[IntentExtractor] could not extract JSON — fallback")
             return _fallback_objective(query)
 
         try:
@@ -280,7 +251,8 @@ class IntentExtractor:
             return _fallback_objective(query)
 
 
-# == Helpers para lidar com parsing da saida da llm
+# ── Parse helpers - para parser saida da llm 
+
 def _try_direct(text: str) -> str | None:
     stripped = text.strip()
     if stripped.startswith("{"):
@@ -303,7 +275,7 @@ def _extract_tag(text: str, tag: str) -> str | None:
 def _extract_markdown_json(text: str) -> str | None:
     match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if match:
-        logger.warning("[IntentExtractor] Used markdown json fallback")
+        logger.warning("[IntentExtractor] markdown json fallback used")
         return match.group(1)
     return None
 
@@ -337,16 +309,8 @@ def _extract_bare_json(text: str) -> str | None:
                         break
     return None
 
-# Caso não seja possivel extrair, nós temos uma mensagem de fallback para o usuário 
-def _fallback_objective(query: str) -> Objective:
-    lang = detect_language(query)
-    if lang == "Portuguese":
-        msg     = "Não consegui entender sua solicitação."
-        question = "Pode reformular sua solicitação com mais detalhes?"
-    else:
-        msg      = "I could not understand your request."
-        question = "Could you rephrase your request with more details?"
 
+def _fallback_objective(query: str) -> Objective:
     return Objective(
         goal="",
         constraints=[],
@@ -355,10 +319,10 @@ def _fallback_objective(query: str) -> Objective:
         extracted_inputs={},
         assumptions=[],
         clarification=ClarificationNeeded(
-            context=msg,
+            context="I could not understand your request.",
             questions=[
                 ClarificationQuestion(
-                    question=question,
+                    question="Could you rephrase your request with more details?",
                     ambiguous_span=query,
                     options=None,
                 )
@@ -367,30 +331,36 @@ def _fallback_objective(query: str) -> Objective:
     )
 
 
-# ── Testes 
+# teste local - rodar esse arquivo como main 
 
-def _run_tests(host: str = "http://localhost:11434", model: str = "deepseek-r1:14b") -> None:
+def _run_tests(
+    host:   str        = "http://localhost:11434",
+    model:  str        = "deepseek-r1:14b",
+    domain: str | None = None,
+) -> None:
+    """
+    Rode com:
+      python -m axon.pa.intent_extractor
+      python -m axon.pa.intent_extractor http://localhost:11434 deepseek-r1:14b clinical
+    """
     config    = PAConfig(llm=LLMConfig(host=host, model=model))
     extractor = IntentExtractor(config)
 
     cases = [
         "Create a 5-slide pitch deck about Q3 results for investors using last quarter revenue data",
-        "analise os dados do paciente João e gere um relatório clínico",
-        "Monte um excel sobre patos",
-        "help me with my project",
-        "crea una presentación sobre gatos para estudiantes",
+        "Analyze patient João's data and generate a clinical report",
+        "Create an Excel spreadsheet about ducks",
+        "Help me with my project",
     ]
 
     for query in cases:
-        lang = detect_language(query)
         print(f"\n{'─' * 60}")
-        print(f"QUERY   : {query!r}")
-        print(f"LANG    : {lang}")
+        print(f"QUERY: {query!r}")
         try:
             obj = extractor.extract(query)
 
             if obj.clarification is None:
-                print("STATUS  : ✓ READY → Decomposer")
+                print("STATUS: ✓ READY → Decomposer")
                 print(f"  goal         : {obj.goal}")
                 print(f"  success      : {obj.success_definition}")
                 if obj.capability_hints:
@@ -405,7 +375,7 @@ def _run_tests(host: str = "http://localhost:11434", model: str = "deepseek-r1:1
                     for a in obj.assumptions:
                         print(f"  assumption   : {a}")
             else:
-                print("STATUS  : ✗ NEEDS CLARIFICATION")
+                print("STATUS: ✗ NEEDS CLARIFICATION")
                 print(f"  goal so far  : {obj.goal or '(unclear)'}")
                 print(f"  context      : {obj.clarification.context}")
                 print(f"  questions ({len(obj.clarification.questions)}):")
@@ -415,8 +385,10 @@ def _run_tests(host: str = "http://localhost:11434", model: str = "deepseek-r1:1
                         for opt in q.options:
                             print(f"       • {opt}")
 
-        except OllamaError as exc:
-            print(f"ERROR   : {type(exc).__name__}: {exc}")
+        except FileNotFoundError as exc:
+            print(f"CONFIG ERROR: {exc}")
+        except Exception as exc:
+            print(f"ERROR: {type(exc).__name__}: {exc}")
 
     print(f"\n{'─' * 60}")
 
@@ -424,6 +396,7 @@ def _run_tests(host: str = "http://localhost:11434", model: str = "deepseek-r1:1
 if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s — %(message)s")
-    host  = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:11434"
-    model = sys.argv[2] if len(sys.argv) > 2 else "deepseek-r1:14b"
-    _run_tests(host=host, model=model)
+    host   = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:11434"
+    model  = sys.argv[2] if len(sys.argv) > 2 else "deepseek-r1:14b"
+    domain = sys.argv[3] if len(sys.argv) > 3 else None
+    _run_tests(host=host, model=model, domain=domain)
