@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 app = FastAPI(title="Currency Agent")
 
 # Substitua por um token gerado via: axon token generate --name currency-agent
-_AXON_TOKEN = "REPLACE_WITH_TOKEN"
+_AXON_TOKEN = "axon_tk_YeWSZ4RaJTRTSFBfXzxVHQDY7NyTqQmY"
 
 AGENT_CARD = {
     "name": "currency-agent",

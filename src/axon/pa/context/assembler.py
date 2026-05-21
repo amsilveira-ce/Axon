@@ -97,9 +97,9 @@ class PromptAssembler:
             str — contexto formatado pronto para injetar no prompt
         """
 
-        print(f"\n[DEBUG assembler] history type: {type(history)}")
-        print(f"[DEBUG assembler] history is_empty: {history.is_empty() if history else 'None'}")
-        print(f"[DEBUG assembler] messages count: {len(history.messages) if history else 0}")
+        # print(f"\n[DEBUG assembler] history type: {type(history)}")
+        # print(f"[DEBUG assembler] history is_empty: {history.is_empty() if history else 'None'}")
+        # print(f"[DEBUG assembler] messages count: {len(history.messages) if history else 0}")
         if history and history.messages:
             for m in history.messages:
                 print(f"  [{m.role}]: {m.content[:80]}")

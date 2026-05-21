@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 # scripts/reset.sh
 # Zera toda a configuração do Axon e começa do zero.
 # Uso: bash scripts/reset.sh [--yes]
@@ -37,7 +36,6 @@ if [[ "$YES" != true ]]; then
   fi
 fi
 
-# ── limpeza ───────────────────────────────────────────────────────────────────
 removed=0
 
 if [[ -f "axon.config.json" ]]; then
@@ -58,7 +56,6 @@ if [[ $removed -eq 0 ]]; then
   exit 0
 fi
 
-# ── re-inicializa ─────────────────────────────────────────────────────────────
 echo ""
 echo -e "  ${DIM}Re-initializing...${RESET}"
 echo ""
