@@ -5,6 +5,8 @@ import typer
 from axon.cli import init, token, add
 from axon.cli.pa import run as pa_run
 from axon.cli.pa import chat as pa_chat
+from axon.cli.pa import config as pa_config
+from axon.cli.pa import skills as pa_skills
 
 app = typer.Typer(
     name="axon",
@@ -19,8 +21,10 @@ app.add_typer(add.app,     name="add",   invoke_without_command=True)
 
 # Principal Agent
 pa_app = typer.Typer(help="Principal Agent commands.", no_args_is_help=True)
-pa_app.add_typer(pa_run.app,  name="run",  invoke_without_command=True)
-pa_app.add_typer(pa_chat.app, name="chat", invoke_without_command=True)
+pa_app.add_typer(pa_run.app,    name="run",    invoke_without_command=True)
+pa_app.add_typer(pa_chat.app,   name="chat",   invoke_without_command=True)
+pa_app.add_typer(pa_config.app, name="config", invoke_without_command=True)
+pa_app.add_typer(pa_skills.app, name="skills", invoke_without_command=True)
 app.add_typer(pa_app, name="pa")
 
 if __name__ == "__main__":

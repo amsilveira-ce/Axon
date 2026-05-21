@@ -8,50 +8,24 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, Field
 
-from axon.types import OperationalMode, ReasoningMode
-
 # ======================================================
 #   Arquivo de configuração
 # ======================================================
 
 CONFIG_FILENAME = "axon.config.json"
 
-# ======================================================
-#   data_dir — resolvido em runtime
-#
-#   Prioridade:
-#     1. AXON_DATA_DIR (env var)          → produção / container
-#     2. axon.config.json → data_dir      → operador configurou explicitamente
-#     3. ".axon"                          → default dev local
-#
-#   Uso:
-#     from axon.config import paths
-#     p = paths()                         # usa cwd implícito
-#     p = paths(cwd=Path("/app"))         # override
-#     p.ga_registry                       # Path resolvido
-# ======================================================
-
 _ENV_DATA_DIR = "AXON_DATA_DIR"
 
 
 class AxonPaths:
-    """
-    Todos os paths do projeto derivados de um único data_dir.
-
-    Nunca construa paths manualmente fora desta classe —
-    registry.py, tokens.py e conversation.py importam daqui.
-    """
+    """Todos os paths do projeto derivados de um único data_dir."""
 
     def __init__(self, data_dir: Path) -> None:
-        self.root = data_dir
-
-        # GA
-        self.ga_dir      = data_dir / "ga"
-        self.ga_registry = data_dir / "ga" / "registry.json"
-        self.ga_tokens   = data_dir / "ga" / "tokens.json"
-        self.ga_traces   = data_dir / "ga" / "traces"
-
-        # PA
+        self.root              = data_dir
+        self.ga_dir            = data_dir / "ga"
+        self.ga_registry       = data_dir / "ga" / "registry.json"
+        self.ga_tokens         = data_dir / "ga" / "tokens.json"
+        self.ga_traces         = data_dir / "ga" / "traces"
         self.pa_dir            = data_dir / "pa"
         self.pa_sessions       = data_dir / "pa" / "sessions"
         self.pa_resource_cache = data_dir / "pa" / "resource_cache.json"
@@ -59,57 +33,33 @@ class AxonPaths:
         self.pa_traces         = data_dir / "pa" / "traces"
 
     def makedirs(self) -> None:
-        """Cria toda a estrutura de diretórios."""
         for d in (
-            self.ga_dir,
-            self.ga_traces,
-            self.pa_dir,
-            self.pa_sessions,
-            self.pa_traces,
+            self.ga_dir, self.ga_traces,
+            self.pa_dir, self.pa_sessions, self.pa_traces,
         ):
             d.mkdir(parents=True, exist_ok=True)
 
 
-def resolve_data_dir(
-    config_data_dir: str | None = None,
-    cwd: Path | None = None,
-) -> Path:
-    """
-    Resolve o data_dir seguindo a ordem de prioridade:
-      1. AXON_DATA_DIR env var  (absoluto ou relativo ao cwd)
-      2. config.data_dir        (valor do axon.config.json)
-      3. ".axon"                (default dev local, relativo ao cwd)
-    """
+def resolve_data_dir(config_data_dir: str | None = None, cwd: Path | None = None) -> Path:
     base = cwd or Path.cwd()
-
-    env = os.environ.get(_ENV_DATA_DIR)
+    env  = os.environ.get(_ENV_DATA_DIR)
     if env:
         p = Path(env)
         return p if p.is_absolute() else base / p
-
     if config_data_dir:
         p = Path(config_data_dir)
         return p if p.is_absolute() else base / p
-
     return base / ".axon"
 
 
 def paths(cwd: Path | None = None) -> AxonPaths:
-    """
-    Retorna AxonPaths resolvido para o contexto atual.
-
-    Lê o axon.config.json se existir para obter data_dir configurado.
-    Se não existir (ex: durante o axon init), usa env var ou default.
-    """
     config_data_dir: str | None = None
     try:
         cfg = read_config(cwd)
         config_data_dir = cfg.data_dir
     except FileNotFoundError:
         pass
-
-    data_dir = resolve_data_dir(config_data_dir, cwd)
-    return AxonPaths(data_dir)
+    return AxonPaths(resolve_data_dir(config_data_dir, cwd))
 
 
 # ======================================================
@@ -123,35 +73,45 @@ class GatewayEntry(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    host:    str = "http://localhost:11434"
-    model:   str = "deepseek-r1:14b"    # Deixar como default um modelo com reasoning
-    timeout: int = 60
+    host:        str   = "http://localhost:11434"
+    model:       str   = "deepseek-r1:14b"
+    temperature: float = 0.0
+    timeout:     int   = 60
 
 
+class BudgetConfig(BaseModel):
+    tokens_max:   int   = 60_000
+    cost_max_usd: float = 0.50
+    calls_max:    int   = 40
+    timeout_ms:   float = 120_000.0
 
-# Discussão de se isso é realmente necessário ..... 
+
 class ConversationConfig(BaseModel):
-    """
-    Configuração da janela deslizante do ConversationHistory.
+    max_messages: int                                    = 10
+    max_tokens:   int | None                             = None
+    window_mode:  Literal["messages", "tokens", "both"] = "messages"
 
-    max_messages — quantas mensagens a janela mantém antes de sumarizar/descartar.
-    window_mode  — critério da janela: "messages" (contagem de turnos) ou
-                   "tokens" (orçamento de tokens, reservado para uso futuro).
-    """
 
-    max_messages: int                          = 10
-    window_mode:  Literal["messages", "tokens"] = "messages"
+class CacheConfig(BaseModel):
+    enabled:  bool = True
+    max_size: int  = 50
+
+
+class IntentExtractorConfig(BaseModel):
+    domain:  str | None = None
+    intents: dict       = Field(default_factory=dict)
 
 
 class PAConfig(BaseModel):
-    port:                   int                = 4100
-    default_mode:           OperationalMode    = OperationalMode.agent
-    default_reasoning_mode: ReasoningMode      = ReasoningMode.react
-    gateways:               list[GatewayEntry] = Field(default_factory=list)
-    max_iterations:         int                = 10
-    cache:                  bool               = True
-    llm:                    LLMConfig          = Field(default_factory=LLMConfig)
-    window_size:            int                = 10
+    port:              int                   = 4100
+    default_reasoning: str                   = "react"
+    max_iterations:    int                   = 10
+    gateways:          list[str]             = Field(default_factory=list)
+    llm:               LLMConfig             = Field(default_factory=LLMConfig)
+    budget:            BudgetConfig          = Field(default_factory=BudgetConfig)
+    conversation:      ConversationConfig    = Field(default_factory=ConversationConfig)
+    cache:             CacheConfig           = Field(default_factory=CacheConfig)
+    intent_extractor:  IntentExtractorConfig = Field(default_factory=IntentExtractorConfig)
 
 
 class GAConfig(BaseModel):
@@ -160,7 +120,7 @@ class GAConfig(BaseModel):
 
 class AxonConfig(BaseModel):
     version:  str      = "0.1.0"
-    data_dir: str      = ".axon"   # sobrescrito em produção via env var ou aqui
+    data_dir: str      = ".axon"
     pa:       PAConfig = Field(default_factory=PAConfig)
     ga:       GAConfig = Field(default_factory=GAConfig)
 
@@ -188,16 +148,10 @@ def read_config(cwd: Path | None = None) -> AxonConfig:
 
 def write_config(config: AxonConfig, cwd: Path | None = None) -> None:
     p = config_path(cwd)
-    p.write_text(
-        config.model_dump_json(indent=2) + "\n",
-        encoding="utf-8",
-    )
+    p.write_text(config.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
 
-def patch_config(
-    fn: Callable[[AxonConfig], AxonConfig],
-    cwd: Path | None = None,
-) -> AxonConfig:
+def patch_config(fn: Callable[[AxonConfig], AxonConfig], cwd: Path | None = None) -> AxonConfig:
     updated = fn(read_config(cwd))
     write_config(updated, cwd)
     return updated
