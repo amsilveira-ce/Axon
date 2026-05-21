@@ -16,20 +16,69 @@ CONFIG_FILENAME = "axon.config.json"
 
 _ENV_DATA_DIR = "AXON_DATA_DIR"
 
+# ======================================================
+#   Default local tools — criado pelo axon init
+# ======================================================
+
+DEFAULT_LOCAL_TOOLS: dict = {
+    "version": "0.1.0",
+    "tools": [
+        {
+            "name":        "calculator",
+            "capability":  "calculation",
+            "description": "Evaluates mathematical expressions safely",
+            "transport":   "stdio",
+            "command":     ["python", "-m", "axon.pa.tools.server"],
+            "enabled":     True,
+        },
+        {
+            "name":        "web_search",
+            "capability":  "web_search",
+            "description": "Searches the web via DuckDuckGo",
+            "transport":   "stdio",
+            "command":     ["python", "-m", "axon.pa.tools.server"],
+            "enabled":     True,
+        },
+        {
+            "name":        "file_reader",
+            "capability":  "file_reading",
+            "description": "Reads local files — PDF, TXT, CSV, MD",
+            "transport":   "stdio",
+            "command":     ["python", "-m", "axon.pa.tools.server"],
+            "enabled":     True,
+        },
+        {
+            "name":        "datetime_tool",
+            "capability":  "datetime",
+            "description": "Returns current date/time and resolves date expressions",
+            "transport":   "stdio",
+            "command":     ["python", "-m", "axon.pa.tools.server"],
+            "enabled":     True,
+        },
+    ],
+}
+
+
+# ======================================================
+#   AxonPaths
+# ======================================================
 
 class AxonPaths:
     """Todos os paths do projeto derivados de um único data_dir."""
 
     def __init__(self, data_dir: Path) -> None:
         self.root              = data_dir
+        # GA
         self.ga_dir            = data_dir / "ga"
         self.ga_registry       = data_dir / "ga" / "registry.json"
         self.ga_tokens         = data_dir / "ga" / "tokens.json"
         self.ga_traces         = data_dir / "ga" / "traces"
+        # PA
         self.pa_dir            = data_dir / "pa"
         self.pa_sessions       = data_dir / "pa" / "sessions"
         self.pa_resource_cache = data_dir / "pa" / "resource_cache.json"
         self.pa_memory_bank    = data_dir / "pa" / "memory_bank.json"
+        self.pa_local_tools    = data_dir / "pa" / "local_tools.json"
         self.pa_traces         = data_dir / "pa" / "traces"
 
     def makedirs(self) -> None:

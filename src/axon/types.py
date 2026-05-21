@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 from datetime import datetime, timezone
+from typing import Literal
 from pydantic import AliasChoices, BaseModel, Field
 from typing import Any
 
@@ -276,3 +277,31 @@ class RegistryFile(BaseModel):
     """Conteúdo de .axon/registry.json."""
     version:   str = "0.1.0"
     resources: list[Resource] = Field(default_factory=list)
+
+
+ 
+class ResourceManifest(BaseModel):
+    """
+    Referência leve a um recurso — usado pelo PA para execução.
+ 
+    Mais enxuto que Resource (registro completo do GA).
+    O GA retorna ResourceManifests no retrieval; o PA os usa para executar.
+ 
+    callable_by:
+        "pa_direct"  → PA chama via MCPClient diretamente (tools locais)
+        "ga_proxy"   → PA chama via GA (recursos remotos registrados)
+ 
+    transport:
+        "stdio"      → processo local via stdin/stdout
+        "http"       → endpoint HTTP remoto
+    """
+ 
+    id:              str
+    name:            str
+    description:     str
+    capability_tags: list[str]                        = Field(default_factory=list)
+    callable_by:     Literal["pa_direct", "ga_proxy"] = "ga_proxy"
+    transport:       Literal["stdio", "http"]         = "http"
+    command:         list[str] | None                 = None   # stdio
+    endpoint:        str | None                       = None   # http
+ 

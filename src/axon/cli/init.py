@@ -7,6 +7,7 @@ import typer
 
 from axon.config import (
     AxonConfig, PAConfig, GAConfig,
+    DEFAULT_LOCAL_TOOLS,
     config_exists, write_config,
     resolve_data_dir, AxonPaths,
 )
@@ -18,26 +19,21 @@ app = typer.Typer()
 def _bootstrap_files(p: AxonPaths) -> None:
     p.makedirs()
 
-    if not p.ga_registry.exists():
-        p.ga_registry.write_text(
-            json.dumps({"version": "0.1.0", "resources": []}, indent=2) + "\n",
-            encoding="utf-8",
-        )
-    if not p.ga_tokens.exists():
-        p.ga_tokens.write_text(
-            json.dumps({"version": "0.1.0", "tokens": []}, indent=2) + "\n",
-            encoding="utf-8",
-        )
-    if not p.pa_resource_cache.exists():
-        p.pa_resource_cache.write_text(
-            json.dumps({"version": "0.1.0", "resources": []}, indent=2) + "\n",
-            encoding="utf-8",
-        )
-    if not p.pa_memory_bank.exists():
-        p.pa_memory_bank.write_text(
-            json.dumps({"version": "0.1.0", "entries": []}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+    defaults = {
+        p.ga_registry:       {"version": "0.1.0", "resources": []},
+        p.ga_tokens:         {"version": "0.1.0", "tokens": []},
+        p.pa_resource_cache: {"version": "0.1.0", "resources": []},
+        p.pa_memory_bank:    {"version": "0.1.0", "entries": []},
+        p.pa_local_tools:    DEFAULT_LOCAL_TOOLS,
+    }
+
+    for path, content in defaults.items():
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(content, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
 
 @app.callback(invoke_without_command=True)
@@ -51,7 +47,7 @@ def init(
         console.print()
         console.print(warn("[bold]Already initialized[/bold]"))
         console.print()
-        console.print(info("[cyan]axon.config.json[/cyan] already exists in this directory."))
+        console.print(info("[cyan]axon.config.json[/cyan] already exists."))
         console.print(info("To start over, run [bold]bash scripts/reset.sh[/bold]"))
         console.print()
         raise typer.Exit(1)
@@ -99,27 +95,32 @@ def init(
     console.print()
     console.print(ok("[bold]axon.config.json[/bold] created"))
     console.print()
-    console.print(f"  [dim]PA[/dim]       localhost:[cyan]{pa.port}[/cyan]")
-    console.print(f"  [dim]GA[/dim]       localhost:[cyan]{ga.port}[/cyan]")
-    console.print(f"  [dim]reasoning[/dim] [cyan]{pa.default_reasoning}[/cyan]")
-    console.print(f"  [dim]data dir[/dim] [cyan]{rel}[/cyan]")
+    console.print(f"  [dim]PA[/dim]        localhost:[cyan]{pa.port}[/cyan]")
+    console.print(f"  [dim]GA[/dim]        localhost:[cyan]{ga.port}[/cyan]")
+    console.print(f"  [dim]reasoning[/dim]  [cyan]{pa.default_reasoning}[/cyan]")
+    console.print(f"  [dim]data dir[/dim]  [cyan]{rel}[/cyan]")
     console.print()
     console.print(f"  {step(f'[dim]{rel}/ga/registry.json[/dim]')}")
     console.print(divider())
     console.print(f"  {step(f'[dim]{rel}/ga/tokens.json[/dim]')}")
     console.print(divider())
-    console.print(f"  {step(f'[dim]{rel}/ga/traces/[/dim]')}")
-    console.print(divider())
     console.print(f"  {step(f'[dim]{rel}/pa/sessions/[/dim]')}")
-    console.print(divider())
-    console.print(f"  {step(f'[dim]{rel}/pa/resource_cache.json[/dim]')}")
     console.print(divider())
     console.print(f"  {step(f'[dim]{rel}/pa/memory_bank.json[/dim]')}")
     console.print(divider())
-    console.print(f"  {step(f'[dim]{rel}/pa/traces/[/dim]')}")
+    console.print(f"  {step(f'[dim]{rel}/pa/resource_cache.json[/dim]')}")
+    console.print(divider())
+    console.print(f"  {step(f'[dim]{rel}/pa/local_tools.json[/dim]  [dim]4 tools[/dim]')}")
+    console.print()
+
+    # lista tools registradas
+    tools = DEFAULT_LOCAL_TOOLS.get("tools", [])
+    console.print("  [dim]Local tools registered:[/dim]")
+    for t in tools:
+        console.print(info(f"[dim]{t['name']:<14} → {t['capability']}[/dim]"))
     console.print()
     console.print("  [dim]Next steps[/dim]")
-    console.print(info("[dim]axon pa run --query '...'[/dim]     one-shot query"))
-    console.print(info("[dim]axon pa chat[/dim]                  interactive session"))
-    console.print(info("[dim]axon pa config[/dim]                show/edit configuration"))
+    console.print(info("[dim]axon pa run --query '...'[/dim]"))
+    console.print(info("[dim]axon pa chat[/dim]"))
+    console.print(info("[dim]axon pa tools list[/dim]"))
     console.print()
