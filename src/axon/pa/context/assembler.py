@@ -96,6 +96,13 @@ class PromptAssembler:
         Returns:
             str — contexto formatado pronto para injetar no prompt
         """
+
+        print(f"\n[DEBUG assembler] history type: {type(history)}")
+        print(f"[DEBUG assembler] history is_empty: {history.is_empty() if history else 'None'}")
+        print(f"[DEBUG assembler] messages count: {len(history.messages) if history else 0}")
+        if history and history.messages:
+            for m in history.messages:
+                print(f"  [{m.role}]: {m.content[:80]}")
         history_str   = self._render_history(history)
         memory_str    = self._render_memory(memory)
         resources_str = self._render_resources(resources)

@@ -41,7 +41,7 @@ class PrincipalAgent:
     ) -> None:
         self.config = config
 
-        # cliente LLM 
+        # cliente LLM compartilhado — IntentExtractor + summarizer + tradução
         self._llm_client = OllamaClient(
             host=config.llm.host,
             model=config.llm.model,
@@ -74,7 +74,10 @@ class PrincipalAgent:
             len(self._history.messages),
         )
 
-    # API pública
+    # ------------------------------------------------------------------
+    #   API pública
+    # ------------------------------------------------------------------
+
     @property
     def session_id(self) -> str:
         return self._history.session_id
@@ -86,8 +89,8 @@ class PrincipalAgent:
         """
         return self._intent_extractor.extract(
             query,
-            history=self._history.get_context(),
-            memory=self._memory.get_summary(),
+            history=self._history,
+            memory=self._memory,
         )
 
     def run(self, query: str) -> str:
@@ -109,13 +112,12 @@ class PrincipalAgent:
 
         intent = self._intent_extractor.extract(
             query,
-            history=self._history.get_context(),
-            memory=self._memory.get_summary(),
+            history=self._history,
+            memory=self._memory,
         )
 
         if intent.clarification is not None:
             response = self._format_clarification(intent.clarification)
-
         else:
             # 2. decompor objetivo em subtarefas
             # subtasks = self._decomposer.decompose(intent)
@@ -173,16 +175,11 @@ class PrincipalAgent:
             logger.warning("[PA] failed to persist session: %s", e)
 
     def _format_clarification(self, intent: ClarificationNeeded) -> str:
-
         lines = [intent.context, ""]
-
         for i, q in enumerate(intent.questions, 1):
-
             lines.append(f"{i}. {q.question}")
-
             if q.options:
                 lines.append(f"   options: {', '.join(q.options)}")
-                
         return "\n".join(lines)
 
     def _format_objective(self, intent: Objective) -> str:
@@ -199,6 +196,9 @@ class PrincipalAgent:
         return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+#   Path helpers
+# ---------------------------------------------------------------------------
 
 def _default_sessions_dir() -> Path:
     """Fallback quando o caller não passa sessions_dir — usa paths() do cwd."""
