@@ -71,6 +71,10 @@ After initialization, you should see:
 - `axon.config.json`: your local configuration
 - `.axon/`: runtime data such as registry entries, sessions, and traces
 
+`axon init` also registers four ready-to-use **local tools** — `calculator`,
+`web_search`, `file_reader`, and `datetime_tool` — that the Principal Agent can
+call directly. List them with `axon pa tools list`. See [Local tools](local-tools.md).
+
 ## 3. Prepare an agent for registration
 
 Axon uses the [A2A protocol](https://a2a-protocol.org) to communicate with agents. To register an agent, you need:
@@ -179,17 +183,47 @@ If a query is ambiguous, Axon asks clarifying questions before taking action:
 
   1. Which patient should be analyzed?
   2. What type of analysis is needed?
-     • clinical summary  /  lab results  /  full report
+     clinical summary  /  lab results  /  full report
 
   you: John Silva, full report
-  ...
-  ◆ identified goal
-     goal    generate a full clinical report for patient John Silva
+
+  ◆ objective identified
+  │  generate a full clinical report for patient John Silva
 ```
+
+## 6. Tune the Principal Agent
+
+The PA works out of the box, but you can shape its behavior without touching
+any code.
+
+Inspect the current settings:
+
+```bash
+axon pa config
+```
+
+Change a setting — for example, switch the model or set a per-run budget:
+
+```bash
+axon pa config --llm llama3.2 --budget-tokens 30000
+```
+
+You can also teach the PA the vocabulary and rules of your field with a
+**domain skill**:
+
+```bash
+axon pa skills new --domain finance   # create the skill file
+# edit src/axon/pa/skills/domains/finance.md
+axon pa config --domain finance       # activate it
+```
+
+See [Skills](skills.md) for how skills steer intent extraction, and
+[Local tools](local-tools.md) for adding your own tools.
 
 ## Next steps
 
 - [Architecture](architecture.md): understand how the PA and GA work internally
-- [Configuration](configuration.md): tune the model, ports, and context window
-- [Deployment](deployment.md): run Axon in a container or production environment
+- [Configuration](configuration.md): tune the model, budget, and context window
+- [Skills](skills.md): steer how the PA understands requests
+- [Local tools](local-tools.md): give the PA tools it can call directly
 - [CLI reference](cli.md): explore the full command surface

@@ -49,6 +49,24 @@ response
 
 The PA maintains conversation context across turns via `ConversationHistory`. Each session is identified by a `session_id` and persisted in `{data_dir}/pa/sessions/`. A sliding window keeps the last N turns in memory; older turns are summarized via LLM and stored in `summary`.
 
+The size and unit of that window are configurable (`conversation.max_messages`, `conversation.max_tokens`, `conversation.window_mode`) — see [Configuration](configuration.md#paconversation).
+
+## Skills layer
+
+The first pipeline stage, the `IntentExtractor`, is driven by editable Markdown **skill** files rather than hard-coded prompts:
+
+- A **base skill** (`intent_extraction.md`) defines general behavior — how the PA reasons about a request and when it should ask for clarification.
+- An optional **domain skill** (`domains/<name>.md`) is layered on top to add field-specific rules (clinical, finance, and so on).
+- A fixed **output contract** is appended last. It defines the JSON structure the parser reads back and is not meant to be edited.
+
+This keeps behavior changes in version-controlled text, separate from the extraction logic. See [Skills](skills.md).
+
+## Local resources
+
+Alongside resources discovered through Gateway Agents, the PA holds a `LocalResourcePool` of **local tools** — MCP tools it invokes directly, without GA discovery. They are declared in `{data_dir}/pa/local_tools.json` and matched to subtasks by capability tag, the same way remote resources are.
+
+Local tools cover always-available, machine-local capabilities (calculation, file reading, web search, date handling); Gateway Agents cover independently deployed remote agents. See [Local tools](local-tools.md).
+
 ## Protocol
 
 Agents communicate with the PA via the A2A protocol. Each agent exposes an agent card at `/.well-known/agent.json` describing its capabilities and skills. The GA uses this card to register and validate the agent.
