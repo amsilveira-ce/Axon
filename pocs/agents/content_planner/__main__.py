@@ -1,4 +1,5 @@
 import logging
+import os
 
 import click
 import uvicorn
@@ -18,10 +19,11 @@ from a2a.types import (
     AgentSkill,
 )
 from starlette.applications import Starlette
-from content_planner_agent import root_agent as content_planner_agent
-from agent_executor import ADKAgentExecutor
+from pocs.agents.content_planner.content_planner_agent.content_planner_agent import root_agent as content_planner_agent
+from pocs.agents.content_planner.content_planner_agent.agent_executor import ADKAgentExecutor
 from dotenv import load_dotenv
 
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -80,13 +82,13 @@ def main(host, port):
 
 def main():
 
-    validation_extension = AgentExtension(
-        uri="https://sua-framework.com/extensions/auth",
-        description="Token de validação para comunicação com a framework",
-    )
-    validation_extension.params["validation_token"] = "seu-token-aqui"
-    validation_extension.params["token_type"] = "Bearer"
-    validation_extension.params["scheme"] = "custom-auth-scheme"
+    axon_extension = AgentExtension(
+    uri="https://axon-framework.dev/extensions/registry/v1",
+    description="Axon registry token for Gateway registration",
+)
+    axon_extension.params["token"] = os.getenv("AXON_TOKEN")
+    axon_extension.params["registry_id"]     = "local"
+    axon_extension.params["protocol_version"] = "0.1"
 
     skill = AgentSkill(
         id="content_planner",
@@ -107,7 +109,7 @@ def main():
         version="1.0.0",
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
-        capabilities=AgentCapabilities(streaming=True, extensions=[validation_extension]),
+        capabilities=AgentCapabilities(streaming=True, extensions=[axon_extension]),
         supported_interfaces=[
             AgentInterface(
                 protocol_binding="JSONRPC",

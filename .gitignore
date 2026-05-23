@@ -8,9 +8,17 @@ __pycache__/
 # Ignore the config file
 axon.config.json
 .axon 
+src/axon/pa/skills/domains/
 tests/
 # C extensions
 *.so
+
+# dentro de pocs/ — não versionar
+pocs/**/__pycache__/
+pocs/**/*.pyc
+pocs/**/.env
+pocs/**/venv/
+pocs/**/.venv/
 
 # Distribution / packaging
 .Python
