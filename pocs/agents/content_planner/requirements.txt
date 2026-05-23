@@ -1,7 +1,9 @@
-a2a-sdk>=0.3.0
+a2a-sdk[http-server]>=0.3.3
+click>=8.2.0
+geopy>=2.4.1
+google-adk[extensions]>=1.0.0
+gradio>=5.30.0
 litellm>=1.0.0
-
-
-click
-google-adk
-python-dotenv
+python-dotenv>=1.0.0
+starlette>=0.37.0
+uvicorn>=0.30.0

@@ -1,45 +1,105 @@
 # Content Planner Agent
 
-Agente A2A que recebe uma descrição de alto nível e retorna um outline detalhado para um conteúdo. Utiliza o Google ADK com LiteLLM (Ollama/Gemma) e expõe uma interface JSON-RPC.
+An A2A agent that takes a high-level description and returns a detailed outline for a piece of content. 
+Built with Google ADK + LiteLLM (Ollama/Gemma) and exposed over a JSON-RPC interface.
 
-## Requisitos
+---
+
+## 1. Requirements
 
 - Python 3.13+
-- [Ollama](https://ollama.com/) rodando localmente com o modelo `gemma3:12b`
+- [Ollama](https://ollama.com/) running locally with the `gemma3:12b` model
+
+Pull the model once:
 
 ```bash
 ollama pull gemma3:12b
 ```
 
-## Instalação
+Make sure Ollama is running before you start the agent:
+
+```bash
+ollama serve
+```
+
+---
+
+## 2. Create a virtual environment
+
+Always work inside a virtual environment so the agent's dependencies stay isolated from your system Python.
+
+### macOS / Linux
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### Windows (PowerShell)
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+### Windows (cmd)
+
+```cmd
+python -m venv .venv
+.venv\Scripts\activate.bat
+```
+
+When the venv is active, your prompt will be prefixed with `(.venv)`. To leave the environment later, just run:
+
+```bash
+deactivate
+```
+
+> Using `uv`? You can skip this step — `uv sync` creates and manages the `.venv` for you.
+
+---
+
+## 3. Install dependencies
+
+With the virtual environment activated:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Ou com `uv`:
+Or, with `uv` (creates the `.venv` automatically):
 
 ```bash
 uv sync
 ```
 
-## Subindo o agente
+---
+
+## 4. Start the agent
 
 ```bash
 uv run python __main__.py
 ```
 
-O servidor sobe em `http://localhost:4115`.
+Or, if you're using plain `pip` / `venv`:
 
-Para confirmar que está no ar:
+```bash
+python __main__.py
+```
+
+The server will start at `http://localhost:4115`.
+
+To confirm it's up and running:
 
 ```bash
 curl http://localhost:4115/.well-known/agent-card.json | python3 -m json.tool
 ```
 
-## Testando com input
+---
 
-### curl
+## 5. Send a request
+
+### Option A — curl
 
 ```bash
 curl -X POST http://localhost:4115 \
@@ -59,7 +119,7 @@ curl -X POST http://localhost:4115 \
   }'
 ```
 
-### Script Python
+### Option B — Python client
 
 ```python
 import asyncio
@@ -80,13 +140,17 @@ async def main():
 asyncio.run(main())
 ```
 
-## Estrutura
+---
+
+## Project structure
 
 ```
-content_planner_agent/
-├── __main__.py              # Ponto de entrada — sobe o servidor A2A
-├── agent_executor.py        # Integração entre ADK e o protocolo A2A
-├── content_planner_agent.py # Definição do agente (modelo, instrução, ferramentas)
+content_planner/
+├── __main__.py              # Entry point — boots the A2A server
+├── agent_executor.py        # Bridges Google ADK with the A2A protocol
+├── content_planner_agent.py # Agent definition (model, instructions, tools)
+├── client.py                # Example A2A client
+├── test_agent.py            # Tests
 ├── requirements.txt
 └── pyproject.toml
 ```

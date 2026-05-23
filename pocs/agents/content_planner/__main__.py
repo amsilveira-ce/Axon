@@ -19,8 +19,8 @@ from a2a.types import (
     AgentSkill,
 )
 from starlette.applications import Starlette
-from pocs.agents.content_planner.content_planner_agent.content_planner_agent import root_agent as content_planner_agent
-from pocs.agents.content_planner.content_planner_agent.agent_executor import ADKAgentExecutor
+from content_planner_agent import root_agent as content_planner_agent
+from agent_executor import ADKAgentExecutor
 from dotenv import load_dotenv
 
 load_dotenv()
