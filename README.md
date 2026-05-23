@@ -105,6 +105,7 @@ See [Getting started](docs/getting-started.md) for the full walkthrough, includi
 - [Getting started](docs/getting-started.md) — install, register an agent, run a query
 - [Architecture](docs/architecture.md) — how the PA and GA work internally
 - [Configuration](docs/configuration.md) — `axon.config.json` and environment variables
+- [The context layer](docs/context-layer.md) — how the Principal Agent remembers things across turns
 - [Skills](docs/skills.md) — steer how the Principal Agent understands requests
 - [Local tools](docs/local-tools.md) — give the Principal Agent tools it can call directly
 - [CLI reference](docs/cli.md) — every available command

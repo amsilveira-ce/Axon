@@ -224,6 +224,7 @@ See [Skills](skills.md) for how skills steer intent extraction, and
 
 - [Architecture](architecture.md): understand how the PA and GA work internally
 - [Configuration](configuration.md): tune the model, budget, and context window
+- [The context layer](context-layer.md): how the PA remembers things across turns
 - [Skills](skills.md): steer how the PA understands requests
 - [Local tools](local-tools.md): give the PA tools it can call directly
 - [CLI reference](cli.md): explore the full command surface

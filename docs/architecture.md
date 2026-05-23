@@ -47,9 +47,20 @@ response
 
 ## Context layer
 
-The PA maintains conversation context across turns via `ConversationHistory`. Each session is identified by a `session_id` and persisted in `{data_dir}/pa/sessions/`. A sliding window keeps the last N turns in memory; older turns are summarized via LLM and stored in `summary`.
+A language model holds no state between calls, so the PA re-supplies what it
+needs to know on every request. The **context layer** maintains two kinds of
+memory and assembles them into the prompt:
 
-The size and unit of that window are configurable (`conversation.max_messages`, `conversation.max_tokens`, `conversation.window_mode`) — see [Configuration](configuration.md#paconversation).
+- **Conversation history** (`ConversationHistory`) — the running dialogue of the
+  current session, kept in a sliding window with older turns summarized by LLM.
+  Persisted per `session_id` in `{data_dir}/pa/sessions/`.
+- **Memory bank** (`MemoryBank`) — durable facts and preferences that hold
+  across every session. Persisted in `{data_dir}/pa/memory_bank.json`.
+
+A `PromptAssembler` combines both — plus available resources and the new query
+— into the context window, trimming to a token budget when needed.
+
+See [The context layer](context-layer.md) for a full explanation.
 
 ## Skills layer
 

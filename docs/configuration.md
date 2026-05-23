@@ -141,6 +141,7 @@ Flags: `--budget-tokens`, `--budget-cost`, `--budget-calls`, `--budget-timeout`.
 Controls the PA's working memory — how much past conversation it keeps in the
 active context window. Older turns that fall outside the window are summarized
 rather than dropped, so long sessions stay coherent without growing unbounded.
+See [The context layer](context-layer.md) for how this memory works.
 
 | Field | Default | Description |
 |---|---|---|
