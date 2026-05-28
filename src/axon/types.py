@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from datetime import datetime, timezone
 from typing import Literal
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 from typing import Any
 
 
@@ -242,66 +242,115 @@ class AgentCard(BaseModel):
  
  
 class Resource(BaseModel):
-    """
-    Recurso registrado no Gateway (.axon/registry.json).
- 
-    Representa tanto agentes A2A quanto tools MCP de forma unificada.
-    O campo type discrimina o comportamento do GA no momento do retrieval
-    e execução.
- 
-    Campos de rastreabilidade:
-      fingerprint: SHA-256 do agent card canônico no momento do registro.
-                   Permite detectar drift de configuração no ping contínuo.
-      token_ref:   valor do token que autorizou o registro.
-                   None = token foi verificado e consumido (não armazenamos
-                   o valor por segurança). Str = apenas para diagnóstico
-                   interno, nunca exposto via CLI.
- 
-    Skills são preservadas do agent card para uso pelo GA no retrieval
-    semântico — o PA descreve a subtarefa em linguagem natural e o GA
-    ranqueia recursos por correspondência com skills.description e tags.
-    """
-    id:            str
-    type:          ResourceType
-    name:          str
-    endpoint:      str
-    description:   str
-    skills:        list[A2ASkill] = Field(default_factory=list)
-    fingerprint:   str
-    token_ref:     str | None = None
-    registered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    status:        ResourceStatus = ResourceStatus.online
- 
- 
+    id:               str
+    type:             ResourceType
+    protocol_binding: ProtocolBinding      # vem do AgentCard.supported_interfaces
+    
+    name:             str
+    endpoint:         str
+    description:      str
+    skills:           list[A2ASkill] | None = Field(default_factory=list)
+    fingerprint:      str
+    token_ref:        str | None = None
+    registered_at:    datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    status:           ResourceStatus = ResourceStatus.online
+
 class RegistryFile(BaseModel):
     """Conteúdo de .axon/registry.json."""
     version:   str = "0.1.0"
     resources: list[Resource] = Field(default_factory=list)
 
 
- 
+class ProtocolBinding(str, Enum):
+    """
+    Transporte de comunicação do recurso.
+    Para agentes A2A: JSONRPC, GRPC, HTTP_JSON.
+    Para ferramentas MCP: MCP_HTTP, MCP_SSE, MCP_STDIO.
+    """
+    # A2A
+    JSONRPC   = "JSONRPC"
+    GRPC      = "GRPC"
+    HTTP_JSON = "HTTP_JSON"
+
+    # MCP
+    MCP_HTTP  = "mcp_http"
+    MCP_SSE   = "mcp_sse"
+    MCP_STDIO = "mcp_stdio"
+
+
+class AuthScheme(str, Enum):
+    """
+    Esquema de autenticação do PA perante o recurso na execução.
+    Separado do AxonToken — que autentica o recurso perante o GA no registro.
+    """
+    none    = "none"
+    bearer  = "bearer"    # Authorization: Bearer {token}
+    api_key = "api_key"   # {header}: {token}
+
+
+class AuthConfig(BaseModel):
+    """
+    Configuração de autenticação do PA perante o recurso.
+
+    O token nunca é armazenado aqui — é resolvido em runtime
+    via variável de ambiente pelo TokenResolver antes de cada chamada.
+
+    scheme:  esquema esperado pelo recurso — inferido do agent card ou manifesto MCP
+    header:  nome do header HTTP: "Authorization", "X-Api-Key", etc.
+    env_var: variável de ambiente que contém o token
+             None → TokenResolver infere como AXON_SECRET_{NAME_UPPER}
+    """
+    scheme:  AuthScheme = AuthScheme.none
+    header:  str | None = None
+    env_var: str | None = None
+
+
 class ResourceManifest(BaseModel):
     """
-    Referência leve a um recurso — usado pelo PA para execução.
- 
-    Mais enxuto que Resource (registro completo do GA).
-    O GA retorna ResourceManifests no retrieval; o PA os usa para executar.
- 
-    callable_by:
-        "pa_direct"  → PA chama via MCPClient diretamente (tools locais)
-        "ga_proxy"   → PA chama via GA (recursos remotos registrados)
- 
-    transport:
-        "stdio"      → processo local via stdin/stdout
-        "http"       → endpoint HTTP remoto
+    Contrato de execução de um recurso.
+    Contém tudo que os clientes (A2AClient, MCPClient) precisam
+    para chamar o recurso sem consultar o GA novamente.
     """
- 
-    id:              str
-    name:            str
-    description:     str
-    capability_tags: list[str]                        = Field(default_factory=list)
-    callable_by:     Literal["pa_direct", "ga_proxy"] = "ga_proxy"
-    transport:       Literal["stdio", "http"]         = "http"
-    command:         list[str] | None                 = None   # stdio
-    endpoint:        str | None                       = None   # http
- 
+    resource_id:      str
+    name:             str
+    type:             ResourceType          # "agent" | "mcp"
+    protocol_binding: ProtocolBinding       # transporte efetivo — vem do AgentCard/registro
+    description:      str = ""
+    capability_tags:  list[str] = Field(default_factory=list)
+    callable_by:      Literal["pa_direct", "ga_proxy"]
+
+    # agent (A2A) — pa_direct
+    endpoint:         str | None = None
+    a2a_capabilities: A2ACapabilities | None = None
+
+    # mcp (HTTP / SSE) — pa_direct
+    # endpoint já cobre — protocol_binding distingue MCP_HTTP de MCP_SSE
+
+    # mcp stdio local do PA — pa_direct
+    command:          list[str] | None = None
+
+    # ga_proxy
+    ga_url:           str | None = None
+
+    # metadata de qualidade e cache
+    match_score:      float = 0.0
+    last_used:        datetime | None = None
+    success_count:    int = 0
+    failure_count:    int = 0
+
+    # autenticação do PA perante o recurso — resolvida em runtime
+    auth:             AuthConfig = Field(default_factory=AuthConfig)
+
+    @model_validator(mode="after")
+    def validate_fields_by_type(self) -> "ResourceManifest":
+        if self.callable_by == "ga_proxy":
+            assert self.ga_url,       "ga_proxy requer ga_url"
+            assert self.resource_id,  "ga_proxy requer resource_id"
+        elif self.type == ResourceType.agent:
+            assert self.endpoint,     "agent requer endpoint"
+        elif self.type == ResourceType.mcp:
+            if self.protocol_binding == ProtocolBinding.MCP_STDIO:
+                assert self.command,  "mcp_stdio requer command"
+            else:
+                assert self.endpoint, f"{self.protocol_binding} requer endpoint"
+        return self

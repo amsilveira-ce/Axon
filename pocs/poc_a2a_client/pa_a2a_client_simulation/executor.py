@@ -44,8 +44,8 @@ from a2a.types.a2a_pb2 import (
     TaskPushNotificationConfig,
 )
 
-# Ajuste o import para o caminho real do seu módulo
 from axon.types import ResourceManifest, AuthScheme, A2ASkill
+from pa_a2a_client_simulation.server import push_results
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +57,12 @@ PA_PORT = int(os.getenv("PA_PORT", "8001"))
 PA_WEBHOOK_URL = f"http://localhost:{PA_PORT}/webhook/task-complete"
 
 _push_results: dict[str, dict] = {}
+
+
+def _resolve_auth_token(manifest: ResourceManifest) -> str | None:
+    if not manifest.auth or not manifest.auth.env_var:
+        return None
+    return os.getenv(manifest.auth.env_var)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -80,9 +86,7 @@ class ManifestCredentialService(CredentialService):
         scheme_name: str,
         context: ClientCallContext | None,
     ) -> str | None:
-        if self._manifest.auth and self._manifest.auth.token:
-            return self._manifest.auth.token
-        return None
+        return _resolve_auth_token(self._manifest)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -189,6 +193,9 @@ def build_request(
     # push_url por request — sobrescreve o default do ClientConfig
     if push_url:
         cfg.task_push_notification_config.url = push_url
+        # Para push, a chamada deve retornar cedo com a task e deixar
+        # a conclusão chegar pelo webhook.
+        cfg.return_immediately = True
 
     return SendMessageRequest(message=msg, configuration=cfg)
 
@@ -255,3 +262,198 @@ async def build_a2a_client(manifest: ResourceManifest):
         client_config=config,
         interceptors=interceptors,
     )
+
+
+# ──────────────────────────────────────────────────────────────
+# extract_text
+#
+# Extrai o texto de um StreamResponse.
+# O StreamResponse tem um oneof "payload" com quatro variantes:
+#   task, message, status_update, artifact_update
+# Para o executor, só task e message carregam texto útil.
+# ──────────────────────────────────────────────────────────────
+
+def extract_text(resp: StreamResponse) -> str | None:
+    kind = resp.WhichOneof("payload")
+    if not kind:
+        return None
+
+    payload = getattr(resp, kind)
+
+    def part_texts(parts) -> list[str]:
+        return [part.text for part in parts if part.HasField("text") and part.text]
+
+    # task → status.message.parts + artifacts + histórico do agente
+    if kind == "task":
+        texts: list[str] = []
+        if payload.status.HasField("message"):
+            texts.extend(part_texts(payload.status.message.parts))
+
+        for artifact in payload.artifacts:
+            texts.extend(part_texts(artifact.parts))
+
+        for history_item in payload.history:
+            if history_item.role == Role.Value("ROLE_AGENT"):
+                texts.extend(part_texts(history_item.parts))
+
+        return "\n".join(texts) if texts else None
+
+    # message direto → parts
+    if kind == "message":
+        texts = part_texts(payload.parts)
+        return "\n".join(texts) if texts else None
+
+    # status_update → status.message.parts
+    if kind == "status_update" and payload.status.HasField("message"):
+        texts = part_texts(payload.status.message.parts)
+        return "\n".join(texts) if texts else None
+
+    # artifact_update → artifact.parts
+    if kind == "artifact_update":
+        texts = part_texts(payload.artifact.parts)
+        return "\n".join(texts) if texts else None
+
+    return None
+
+
+def _collect_part_texts(parts) -> list[str]:
+    texts: list[str] = []
+    for part in parts or []:
+        text = None
+        if isinstance(part, dict):
+            text = part.get("text")
+        else:
+            text = getattr(part, "text", None)
+        if text:
+            texts.append(text)
+    return texts
+
+
+def _extract_text_from_push_payload(payload: dict) -> str | None:
+    texts: list[str] = []
+    root = payload.get("task", payload) if isinstance(payload, dict) else payload
+
+    if isinstance(root, dict):
+        message = root.get("message")
+        if isinstance(message, dict):
+            texts.extend(_collect_part_texts(message.get("parts")))
+
+        status = root.get("status")
+        if isinstance(status, dict):
+            status_message = status.get("message")
+            if isinstance(status_message, dict):
+                texts.extend(_collect_part_texts(status_message.get("parts")))
+
+        for artifact in root.get("artifacts", []):
+            if isinstance(artifact, dict):
+                texts.extend(_collect_part_texts(artifact.get("parts")))
+
+        for history_item in root.get("history", []):
+            if isinstance(history_item, dict):
+                texts.extend(_collect_part_texts(history_item.get("parts")))
+
+    if isinstance(payload, dict):
+        artifact_update = payload.get("artifact_update")
+        if isinstance(artifact_update, dict):
+            artifact = artifact_update.get("artifact")
+            if isinstance(artifact, dict):
+                texts.extend(_collect_part_texts(artifact.get("parts")))
+
+        status_update = payload.get("status_update")
+        if isinstance(status_update, dict):
+            status = status_update.get("status")
+            if isinstance(status, dict):
+                message = status.get("message")
+                if isinstance(message, dict):
+                    texts.extend(_collect_part_texts(message.get("parts")))
+
+    result = "\n".join(texts).strip()
+    return result or None
+
+
+# ──────────────────────────────────────────────────────────────
+# execute
+#
+# Ponto de entrada do executor — recebe o ResourceManifest,
+# a subtask em texto, e a skill selecionada, e devolve o
+# resultado completo como string.
+#
+# O PA usa o resultado para marcar a subtask como concluída
+# e avançar no plano — portanto acumula todos os chunks antes
+# de retornar, independente de streaming estar ativo.
+#
+# Streaming ativo significa que os chunks chegam incrementalmente
+# via SSE, mas o PA ainda recebe tudo de uma vez no retorno.
+# ──────────────────────────────────────────────────────────────
+
+async def execute(
+    manifest: ResourceManifest,
+    prompt: str,
+    skill: A2ASkill | None = None,
+) -> str:
+    logger.info(
+        f"[execute] resource={manifest.resource_id} "
+        f"endpoint={manifest.endpoint} "
+        f"streaming={manifest.a2a_capabilities.streaming if manifest.a2a_capabilities else False}"
+    )
+
+    request = build_request(prompt, skill=skill)
+
+    async with await build_a2a_client(manifest) as client:
+        chunks: list[str] = []
+        async for resp in client.send_message(request):
+            text = extract_text(resp)
+            if text:
+                chunks.append(text)
+
+    result = "".join(chunks)
+    logger.info(f"[execute] concluído ({len(result)} chars)")
+    return result
+
+
+async def execute_with_push(
+    manifest: ResourceManifest,
+    prompt: str,
+    skill: A2ASkill | None = None,
+    timeout: float = 30.0,
+) -> str:
+    logger.info(
+        f"[execute_with_push] resource={manifest.resource_id} "
+        f"endpoint={manifest.endpoint}"
+    )
+
+    request = build_request(prompt, skill=skill, push_url=PA_WEBHOOK_URL)
+    task_id: str | None = None
+    fallback_chunks: list[str] = []
+
+    async with await build_a2a_client(manifest) as client:
+        async for resp in client.send_message(request):
+            if resp.HasField("task") and resp.task.id and not task_id:
+                task_id = resp.task.id
+
+            text = extract_text(resp)
+            if text:
+                fallback_chunks.append(text)
+
+    if task_id:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            payload = push_results.pop(task_id, None)
+            if payload:
+                pushed_text = _extract_text_from_push_payload(payload)
+                if pushed_text:
+                    logger.info(
+                        f"[execute_with_push] push recebido ({len(pushed_text)} chars)"
+                    )
+                    return pushed_text
+                return str(payload)
+            await asyncio.sleep(0.1)
+
+    if fallback_chunks:
+        result = "".join(fallback_chunks)
+        logger.info(
+            f"[execute_with_push] sem push, usando resposta direta ({len(result)} chars)"
+        )
+        return result
+
+    raise TimeoutError("Nenhum push recebido dentro do tempo limite.")

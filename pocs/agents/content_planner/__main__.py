@@ -2,6 +2,7 @@ import logging
 import os
 
 import click
+import httpx
 import uvicorn
 
 # from a2a.server.apps import A2AStarletteApplication
@@ -10,7 +11,11 @@ from a2a.server.routes import (
     create_agent_card_routes,
     create_jsonrpc_routes,
 )
-from a2a.server.tasks import InMemoryTaskStore
+from a2a.server.tasks import (
+    BasePushNotificationSender,
+    InMemoryPushNotificationConfigStore,
+    InMemoryTaskStore,
+)
 from a2a.types import (
     AgentExtension,
     AgentCapabilities,
@@ -109,7 +114,11 @@ def main():
         version="1.0.0",
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
-        capabilities=AgentCapabilities(streaming=True, extensions=[axon_extension]),
+        capabilities=AgentCapabilities(
+            streaming=True,
+            push_notifications=True,
+            extensions=[axon_extension],
+        ),
         supported_interfaces=[
             AgentInterface(
                 protocol_binding="JSONRPC",
@@ -119,12 +128,20 @@ def main():
         skills=[skill],
     )
 
+    push_config_store = InMemoryPushNotificationConfigStore()
+    push_sender = BasePushNotificationSender(
+        httpx_client=httpx.AsyncClient(),
+        config_store=push_config_store,
+    )
+
     request_handler = DefaultRequestHandler(
         agent_executor=ADKAgentExecutor(
             agent=content_planner_agent,
         ),
         task_store=InMemoryTaskStore(),
         agent_card=public_agent_card,
+        push_config_store=push_config_store,
+        push_sender=push_sender,
     )
 
     routes = []
