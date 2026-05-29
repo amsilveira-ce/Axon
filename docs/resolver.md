@@ -239,7 +239,7 @@ are wanted → `gateway resources --filter eligible` to confirm.
 
 | file | written by | holds |
 |------|-----------|-------|
-| `{data_dir}/pa/resource_cache.json` | Resolver (Step 2) | manifests discovered via GA — pre-populates the pool next run |
+| `{data_dir}/pa/resource_cache.json` | Resolver (Step 2) | manifests discovered via GA — pre-populates the pool next run; LRU-bounded by `pa.cache.max_size` |
 | `{data_dir}/pa/ga_affinity.json` | Resolver (Step 2) | UCB1 reward table per `(gateway, capability)` |
 | `{data_dir}/ga/{context}/connections.json` | GA (`POST /pa/connect`) | PAs that connected to this gateway |
 

@@ -96,6 +96,12 @@ def init(
         raw = typer.prompt("  Max PA iterations", default=str(pa.max_iterations))
         pa  = pa.model_copy(update={"max_iterations": int(raw)})
 
+        raw = typer.prompt(
+            "  Resource cache size (max GA-discovered resources, 0 = unlimited)",
+            default=str(pa.cache.max_size),
+        )
+        pa = pa.model_copy(update={"cache": pa.cache.model_copy(update={"max_size": int(raw)})})
+
         data_dir = typer.prompt("  Data directory", default=data_dir)
 
         # seleção interativa de retrieval
@@ -151,6 +157,8 @@ def init(
     console.print(f"  [dim]PA[/dim]        localhost:[cyan]{pa.port}[/cyan]")
     console.print(f"  [dim]GA[/dim]        localhost:[cyan]{ga_port}[/cyan]")
     console.print(f"  [dim]reasoning[/dim]  [cyan]{pa.default_reasoning}[/cyan]")
+    cache_display = f"{pa.cache.max_size} resources (LRU)" if pa.cache.max_size > 0 else "unlimited"
+    console.print(f"  [dim]cache[/dim]      [cyan]{cache_display}[/cyan]")
     console.print(f"  [dim]retrieval[/dim]  [cyan]{retrieval_strategy}[/cyan]", end="")
     if embedding_model:
         console.print(f"  [dim]model:[/dim] [cyan]{embedding_model}[/cyan]")

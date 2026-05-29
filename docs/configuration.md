@@ -24,7 +24,7 @@ A freshly initialized file looks like this:
   "data_dir": ".axon",
   "pa": {
     "port": 4100,
-    "default_reasoning": "react",
+    "default_reasoning": "rewoo",
     "max_iterations": 10,
     "gateways": [],
     "llm": {
@@ -86,8 +86,8 @@ Flag: *(not editable via `axon pa config`)*.
 
 The reasoning strategy the PA uses to plan and execute work. Options:
 
-- `react` — reason and act step by step (default)
-- `rewoo` — plan the whole sequence first, then execute
+- `rewoo` — plan the whole sequence first, then execute (default)
+- `react` — reason and act step by step
 - `tot` — explore several reasoning branches (tree of thought)
 
 Flag: `--reasoning-mode`. Changing this requires a restart.
@@ -156,14 +156,27 @@ Flags: `--conversation-max-messages`, `--conversation-max-tokens`,
 
 The cross-session resource cache. When enabled, resources discovered through a
 Gateway Agent are remembered between runs, so the PA does not re-discover the
-same agents every time.
+same agents every time. See [Resource resolution](resolver.md) for how the
+Resolver fills and reads it.
 
 | Field | Default | Description |
 |---|---|---|
 | `enabled` | `true` | Whether the resource cache is active |
-| `max_size` | `50` | Maximum number of cached resources |
+| `max_size` | `50` | Maximum number of cached **resources** (LRU) |
 
 Flags: `--cache`, `--cache-max-size`.
+
+**What `max_size` counts.** One slot per **resource**, regardless of type — an
+A2A agent is one, an MCP server is one, and the two share the same budget. It is
+per *resource*, not per *tool*: an MCP server counts as one even if it exposes
+several tools (those are skills inside the resource). Only resources discovered
+through a Gateway Agent are counted — local tools live in the
+[local pool](local-tools.md) and never take a slot.
+
+**Eviction is LRU.** Recency is the order in which resources are discovered or
+refreshed (`put`). When the cache exceeds `max_size`, the least-recently-discovered
+resource is dropped. A resource that keeps being rediscovered stays; stale ones
+are evicted. Set `max_size` to `0` for no limit.
 
 ### `pa.intent_extractor`
 

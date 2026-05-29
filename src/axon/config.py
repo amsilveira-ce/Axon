@@ -239,7 +239,7 @@ class ResourcePolicyConfig(BaseModel):
 
 class PAConfig(BaseModel):
     port:              int                   = 4100
-    default_reasoning: str                   = "react"
+    default_reasoning: str                   = "rewoo"
     max_iterations:    int                   = 10
     gateways:          list[ConnectedGateway] = Field(default_factory=list)
     llm:               LLMConfig             = Field(default_factory=LLMConfig)

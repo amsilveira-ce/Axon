@@ -72,9 +72,14 @@ class PrincipalAgent:
         self._local_pool = LocalResourcePool.load(local_tools_path)
         logger.info("[PA] local pool — %d tools", len(self._local_pool))
 
-        # Step 2 — ResourceCache (recursos GA de runs anteriores)
-        self._resource_cache = ResourceCache.load(self._cache_path)
-        logger.info("[PA] resource cache — %d resources", len(self._resource_cache))
+        # Step 2 — ResourceCache (recursos GA de runs anteriores) — LRU por cache.max_size
+        self._resource_cache = ResourceCache.load(
+            self._cache_path, max_size=config.cache.max_size
+        )
+        logger.info(
+            "[PA] resource cache — %d/%d resources",
+            len(self._resource_cache), config.cache.max_size,
+        )
 
         # Step 3 — Resolver (discovery via GA + afinidade UCB1 por gateway)
         affinity_path = (
