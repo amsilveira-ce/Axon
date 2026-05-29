@@ -6,34 +6,43 @@ from pathlib import Path
 import typer
 
 from axon.config import (
-    AxonConfig, PAConfig, GAConfig,
+    AxonConfig, PAConfig, GAInstanceConfig,
     DEFAULT_LOCAL_TOOLS,
     config_exists, write_config,
-    resolve_data_dir, AxonPaths,
+    resolve_data_dir, AxonPaths, GAPaths,
 )
 from axon.cli._print import console, warn, ok, fatal, info, step, divider
+from axon.cli.ga._prompts import pick_retrieval_strategy
 
 app = typer.Typer()
 
 
-def _bootstrap_files(p: AxonPaths) -> None:
+def _bootstrap_files(p: AxonPaths, ga_dir: Path) -> None:
     p.makedirs()
 
-    defaults = {
-        p.ga_registry:       {"version": "0.1.0", "resources": []},
-        p.ga_tokens:         {"version": "0.1.0", "tokens": []},
+    gp = GAPaths(ga_dir)
+    gp.makedirs()
+
+    pa_defaults = {
         p.pa_resource_cache: {"version": "0.1.0", "resources": []},
         p.pa_memory_bank:    {"version": "0.1.0", "entries": []},
         p.pa_local_tools:    DEFAULT_LOCAL_TOOLS,
     }
+    ga_defaults = {
+        gp.registry: {"version": "0.1.0", "resources": []},
+        gp.tokens:   {"version": "0.1.0", "tokens": []},
+    }
 
-    for path, content in defaults.items():
+    for path, content in {**pa_defaults, **ga_defaults}.items():
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
                 json.dumps(content, indent=2) + "\n",
                 encoding="utf-8",
             )
+
+
+
 
 
 @app.callback(invoke_without_command=True)
@@ -54,15 +63,17 @@ def init(
 
     console.print("\n  [bold]Axon[/bold] [dim]v0.1.0[/dim]\n")
 
-    pa = PAConfig()
-    ga = GAConfig()
+    pa      = PAConfig()
+    ga_port = 5000
+    retrieval_strategy = "keyword"
+    embedding_model    = None
 
     if not yes:
         raw = typer.prompt("  PA control API port", default=str(pa.port))
-        pa = pa.model_copy(update={"port": int(raw)})
+        pa  = pa.model_copy(update={"port": int(raw)})
 
-        raw = typer.prompt("  Gateway Agent port", default=str(ga.port))
-        ga = ga.model_copy(update={"port": int(raw)})
+        raw     = typer.prompt("  Gateway Agent port", default=str(ga_port))
+        ga_port = int(raw)
 
         raw = typer.prompt("  Default reasoning mode (react/rewoo/tot)", default=pa.default_reasoning)
         if raw in ("react", "rewoo", "tot"):
@@ -71,22 +82,46 @@ def init(
             console.print(warn(f"Unknown mode '{raw}', using default: {pa.default_reasoning}"))
 
         raw = typer.prompt("  Max PA iterations", default=str(pa.max_iterations))
-        pa = pa.model_copy(update={"max_iterations": int(raw)})
+        pa  = pa.model_copy(update={"max_iterations": int(raw)})
 
         data_dir = typer.prompt("  Data directory", default=data_dir)
 
-    config = AxonConfig(pa=pa, ga=ga, data_dir=data_dir)
+        # seleção interativa de retrieval
+        ollama_host = typer.prompt("  Ollama host", default="http://localhost:11434")
+        retrieval_strategy, embedding_model = pick_retrieval_strategy(ollama_host=ollama_host)
+
+    # monta config
+    local_ga_url = f"http://localhost:{ga_port}"
+    pa = pa.model_copy(update={"gateways": [local_ga_url]})
+
+    ga_instance = GAInstanceConfig(
+        name="Axon Local Gateway",
+        port=ga_port,
+        data_dir=f"{data_dir}/ga/default",
+        retrieval_strategy=retrieval_strategy,
+        embedding_model=embedding_model,
+    )
+
+    config = AxonConfig(
+        pa=pa,
+        data_dir=data_dir,
+        gateways={"default": ga_instance},
+        current_gateway="default",
+    )
 
     try:
         write_config(config)
     except Exception as e:
         fatal(f"Could not write axon.config.json: {e}")
 
-    cwd = Path.cwd()
-    p   = AxonPaths(resolve_data_dir(data_dir, cwd))
+    cwd    = Path.cwd()
+    p      = AxonPaths(resolve_data_dir(data_dir, cwd))
+    ga_dir = Path(data_dir) / "ga" / "default"
+    if not ga_dir.is_absolute():
+        ga_dir = cwd / ga_dir
 
     try:
-        _bootstrap_files(p)
+        _bootstrap_files(p, ga_dir)
     except Exception as e:
         fatal(f"Could not create data directory structure: {e}")
 
@@ -96,8 +131,13 @@ def init(
     console.print(ok("[bold]axon.config.json[/bold] created"))
     console.print()
     console.print(f"  [dim]PA[/dim]        localhost:[cyan]{pa.port}[/cyan]")
-    console.print(f"  [dim]GA[/dim]        localhost:[cyan]{ga.port}[/cyan]")
+    console.print(f"  [dim]GA[/dim]        localhost:[cyan]{ga_port}[/cyan]")
     console.print(f"  [dim]reasoning[/dim]  [cyan]{pa.default_reasoning}[/cyan]")
+    console.print(f"  [dim]retrieval[/dim]  [cyan]{retrieval_strategy}[/cyan]", end="")
+    if embedding_model:
+        console.print(f"  [dim]model:[/dim] [cyan]{embedding_model}[/cyan]")
+    else:
+        console.print()
     console.print(f"  [dim]data dir[/dim]  [cyan]{rel}[/cyan]")
     console.print()
     console.print(f"  {step(f'[dim]{rel}/ga/registry.json[/dim]')}")
@@ -113,13 +153,13 @@ def init(
     console.print(f"  {step(f'[dim]{rel}/pa/local_tools.json[/dim]  [dim]4 tools[/dim]')}")
     console.print()
 
-    # lista tools registradas
     tools = DEFAULT_LOCAL_TOOLS.get("tools", [])
     console.print("  [dim]Local tools registered:[/dim]")
     for t in tools:
         console.print(info(f"[dim]{t['name']:<14} → {t['capability']}[/dim]"))
     console.print()
     console.print("  [dim]Next steps[/dim]")
+    console.print(info("[dim]axon ga serve[/dim]                   start the Gateway Agent"))
     console.print(info("[dim]axon pa run --query '...'[/dim]"))
     console.print(info("[dim]axon pa chat[/dim]"))
     console.print(info("[dim]axon pa tools list[/dim]"))
