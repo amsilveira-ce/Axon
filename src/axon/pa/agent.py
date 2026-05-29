@@ -6,10 +6,12 @@ from pathlib import Path
 from axon.config import PAConfig
 from axon.llms.ollama_client import OllamaClient
 from axon.pa.context.conversation import ConversationHistory
-from axon.pa.local_pool import LocalResourcePool
 from axon.pa.context.memory import MemoryBank
-from axon.pa.intent_extractor import IntentExtractor, ExtractionTrace
-from axon.pa.models import ClarificationNeeded, Objective
+from axon.pa.decomposer import Decomposer
+from axon.pa.intent_extractor import ExtractionTrace, IntentExtractor
+from axon.pa.local_pool import LocalResourcePool
+from axon.pa.models import AgentState, ClarificationNeeded, Objective, Plan
+from axon.pa.resource_cache import ResourceCache
 
 logger = logging.getLogger(__name__)
 
@@ -20,17 +22,17 @@ class PrincipalAgent:
 
     Coordena o ciclo completo:
       1. IntentExtractor  — query → Objective              ✦ ativo
-      2. Decomposer       — Objective → list[Subtask]
-      3. Planner          — list[Subtask] → Plan (DAG)
-      4. Resolver         — Plan + GatewayAgents → resource_pool
-      5. Executor         — Plan + resource_pool → Facts + Failures
+      2. Decomposer       — Objective → Plan (ReWOO)       ✦ ativo
+      3. Resolver         — Plan + GatewayAgents → resource_pool
+      4. Executor         — Plan + resource_pool → Facts + Failures
 
     Opera inteiramente em inglês.
     Tradução de/para o idioma do usuário acontece em pa/api.py.
 
-    Context Layer:
-      ConversationHistory — histórico da sessão atual, janela deslizante
-      MemoryBank          — preferências cross-session, carregadas no startup
+    Resource pool por run:
+      LocalResourcePool  → tools locais (MCP stdio, pa_direct)
+      ResourceCache      → recursos GA descobertos em runs anteriores
+      Resolver           → recursos novos descobertos nesta run (adicionados ao state)
     """
 
     def __init__(
@@ -38,11 +40,11 @@ class PrincipalAgent:
         config:       PAConfig,
         sessions_dir: Path | None = None,
         memory_path:  Path | None = None,
+        cache_path:   Path | None = None,
         session_id:   str | None  = None,
     ) -> None:
         self.config = config
 
-        # cliente LLM compartilhado — IntentExtractor + summarizer + tradução
         self._llm_client = OllamaClient(
             host=config.llm.host,
             model=config.llm.model,
@@ -50,26 +52,31 @@ class PrincipalAgent:
         )
 
         self._intent_extractor = IntentExtractor(config)
+        self._decomposer       = Decomposer(config)
         self.last_trace: ExtractionTrace | None = None
-        
 
-        # context layer — paths resolvidos pelo caller (api.py / cli)
-        # ou derivados do cwd como fallback
+        # paths
         self._sessions_dir = sessions_dir or _default_sessions_dir()
         self._memory_path  = memory_path  or _default_memory_path()
+        self._cache_path   = cache_path   or _default_cache_path()
 
-        # LocalResourcePool — tools locais, carregadas no startup
-        local_tools_path  = (sessions_dir.parent / 'local_tools.json') if sessions_dir else _default_local_tools_path()
-        self._local_pool  = LocalResourcePool.load(local_tools_path)
-        logger.info('[PA] local pool loaded — %d tools', len(self._local_pool))
-
-        # MemoryBank — carregado uma vez no startup, persiste entre sessões
-        self._memory = MemoryBank.load_or_create(self._memory_path)
-        logger.info(
-            "[PA] memory loaded — %d entries", len(self._memory.entries)
+        # Step 1 — LocalResourcePool (MCP stdio, pa_direct)
+        local_tools_path = (
+            (sessions_dir.parent / "local_tools.json")
+            if sessions_dir else _default_local_tools_path()
         )
+        self._local_pool = LocalResourcePool.load(local_tools_path)
+        logger.info("[PA] local pool — %d tools", len(self._local_pool))
 
-        # ConversationHistory — carregada ou criada para esta sessão
+        # Step 2 — ResourceCache (recursos GA de runs anteriores)
+        self._resource_cache = ResourceCache.load(self._cache_path)
+        logger.info("[PA] resource cache — %d resources", len(self._resource_cache))
+
+        # MemoryBank
+        self._memory = MemoryBank.load_or_create(self._memory_path)
+        logger.info("[PA] memory — %d entries", len(self._memory.entries))
+
+        # ConversationHistory
         self._history = ConversationHistory.load_or_create(
             session_id=session_id,
             sessions_dir=self._sessions_dir,
@@ -90,10 +97,7 @@ class PrincipalAgent:
         return self._history.session_id
 
     def extract_intent(self, query: str) -> Objective:
-        """
-        Extrai intenção passando contexto real de memória e histórico.
-        Usado pelo chat interativo — não registra o turno no histórico.
-        """
+        """Extrai intenção. Usado pelo chat — não registra no histórico."""
         intent, trace = self._intent_extractor.extract(
             query,
             history=self._history,
@@ -105,21 +109,18 @@ class PrincipalAgent:
 
     def run(self, query: str) -> str:
         """
-        Ponto de entrada síncrono para one-shot (axon pa run / POST /run).
+        Ponto de entrada one-shot. Executa o pipeline completo.
 
-        Registra o turno no histórico e persiste a sessão.
-
-        Args:
-            query: query em inglês (já traduzida pelo endpoint se necessário)
-
-        Returns:
-            str — resposta em inglês (endpoint traduz de volta se necessário)
+        Fluxo atual:
+          1. IntentExtractor → Objective
+          2. AgentState criado e resource_pool populado
+          3. Decomposer → Plan
+          4. Resolver (pendente)
+          5. Executor (pendente)
         """
-        # registra turno do usuário
-        self._history.add_message(
-            "user", query, llm_client=self._llm_client
-        )
+        self._history.add_message("user", query, llm_client=self._llm_client)
 
+        # 1. IntentExtractor
         intent, trace = self._intent_extractor.extract(
             query,
             history=self._history,
@@ -130,34 +131,43 @@ class PrincipalAgent:
 
         if intent.clarification is not None:
             response = self._format_clarification(intent.clarification)
-        else:
-            # 2. decompor objetivo em subtarefas
-            # subtasks = self._decomposer.decompose(intent)
+            self._history.add_message("assistant", response, llm_client=self._llm_client)
+            self._persist_session()
+            return response
 
-            # 3. montar plano (DAG)
-            # plan = self._planner.plan(subtasks)
-
-            # 4. resolver recursos via Gateway Agents
-            # resource_pool = self._resolver.resolve(plan)
-
-            # 5. executar plano
-            # result = self._executor.execute(plan, resource_pool)
-
-            # 6. retornar resposta final
-            # response = result.summary
-
-            response = self._format_objective(intent)
-
-        # registra resposta do assistente e persiste
-        self._history.add_message(
-            "assistant", response, llm_client=self._llm_client
+        # Step 3 — cria AgentState e pré-popula resource_pool
+        state = AgentState(raw_query=query, objective=intent)
+        state.resource_pool = (
+            self._local_pool.tools
+            + self._resource_cache.all()
         )
-        self._persist_session()
 
+        logger.info(
+            "[PA] resource_pool — %d resources (%d local, %d cached)",
+            len(state.resource_pool),
+            len(self._local_pool.tools),
+            len(self._resource_cache),
+        )
+
+        # Step 4 — Decomposer lê state.objective + state.resource_pool
+        #           escreve state.plan
+        self._decomposer.decompose(state)
+
+        # 3. Resolver (pendente)
+        # self._resolver.resolve(state)
+
+        # 4. Executor (pendente)
+        # self._executor.execute(state)
+        # response = state.summary
+
+        response = self._format_plan(intent, state.plan)
+
+        self._history.add_message("assistant", response, llm_client=self._llm_client)
+        self._persist_session()
         return response
 
     # ------------------------------------------------------------------
-    #   Memory API — exposta para axon pa memory (futuro)
+    #   Memory API
     # ------------------------------------------------------------------
 
     def memory_set(self, key: str, value: object, source: str = "operator") -> None:
@@ -195,16 +205,31 @@ class PrincipalAgent:
         return "\n".join(lines)
 
     def _format_objective(self, intent: Objective) -> str:
+        """Formata só o Objective — usado pelo chat.py."""
         lines = [
             f"goal: {intent.goal}",
             f"success: {intent.success_definition}",
         ]
         if intent.constraints:
-            lines.append(
-                f"constraints: {', '.join(c.value for c in intent.constraints)}"
-            )
-        lines.append("")
-        lines.append("[decomposer not implemented — next step]")
+            lines.append(f"constraints: {', '.join(c.value for c in intent.constraints)}")
+        return "\n".join(lines)
+
+    def _format_plan(self, intent: Objective, plan: Plan) -> str:
+        """Formata Objective + Plan — usado pelo run()."""
+        lines = [
+            f"goal: {intent.goal}",
+            f"success: {intent.success_definition}",
+            "",
+            f"plan ({len(plan.subtasks)} subtask(s)):",
+        ]
+        for s in plan.subtasks:
+            lines.append(f"  [{s.id}] {s.description}")
+            lines.append(f"    capability : {s.capability_required}")
+            if s.output_artifact:
+                lines.append(f"    output     : {s.output_artifact}")
+            if s.depends_on:
+                lines.append(f"    depends_on : {', '.join(s.depends_on)}")
+        lines.extend(["", "[resolver not implemented — next step]"])
         return "\n".join(lines)
 
 
@@ -213,7 +238,6 @@ class PrincipalAgent:
 # ---------------------------------------------------------------------------
 
 def _default_sessions_dir() -> Path:
-    """Fallback quando o caller não passa sessions_dir — usa paths() do cwd."""
     try:
         from axon.config import paths
         return paths().pa_sessions
@@ -222,12 +246,19 @@ def _default_sessions_dir() -> Path:
 
 
 def _default_memory_path() -> Path:
-    """Fallback quando o caller não passa memory_path — usa paths() do cwd."""
     try:
         from axon.config import paths
         return paths().pa_memory_bank
     except Exception:
         return Path(".axon/pa/memory_bank.json")
+
+
+def _default_cache_path() -> Path:
+    try:
+        from axon.config import paths
+        return paths().pa_resource_cache
+    except Exception:
+        return Path(".axon/pa/resource_cache.json")
 
 
 def _default_local_tools_path() -> Path:

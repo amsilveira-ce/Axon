@@ -123,7 +123,7 @@ def _subtask_schema() -> dict:
     return SubtaskList.model_json_schema()
 
 
-# ── Context builder 
+# ── Context builder ───────────────────────────────────────────────────────────
 
 def _build_context(
     objective:     Objective,
@@ -203,28 +203,30 @@ class Decomposer:
 
         logger.debug("[Decomposer] initialized — model=%s", config.llm.model)
 
-    def decompose(
-        self,
-        objective:     Objective,
-        resource_pool: list[ResourceManifest] | None = None,
-        memory:        str = "No user memory available.",
-    ) -> Plan:
+    def decompose(self, state: "AgentState") -> None:  # type: ignore[name-defined]
         """
-        Decompõe um Objective em um Plan com Subtasks ReWOO.
+        Decompõe o Objective do AgentState em um Plan com Subtasks ReWOO.
+
+        Lê state.objective e state.resource_pool — que já devem estar
+        populados pelo agent.py antes desta chamada.
 
         Args:
-            objective:     resultado do IntentExtractor
-            resource_pool: manifests disponíveis para capability matching
-            memory:        MemoryBank.get_summary() (opcional)
+            state: AgentState com objective e resource_pool preenchidos
 
-        Returns:
-            Plan com subtasks ordenadas e dependências resolvidas
+        Escreve:
+            state.plan
         """
-        pool      = resource_pool or []
-        context   = _build_context(objective, pool, memory)
-        raw       = self._llm_decompose(context)
-        subtasks  = self._parse(raw, pool)
-        return Plan(subtasks=subtasks)
+        from axon.pa.models import AgentState
+
+        objective = state.objective
+        if objective is None:
+            raise ValueError("AgentState.objective must be set before decompose()")
+
+        pool     = state.resource_pool or []
+        context  = _build_context(objective, pool)
+        raw      = self._llm_decompose(context)
+        subtasks = self._parse(raw, pool)
+        state.plan = Plan(subtasks=subtasks)
 
     # ── LLM ──────────────────────────────────────────────────────────────────
 
@@ -456,7 +458,10 @@ def _run_tests(
         print(f"\n{'─' * 64}")
         print(f"GOAL: {obj.goal!r}")
         try:
-            plan = decomposer.decompose(obj, resource_pool=pool)
+            from axon.pa.models import AgentState
+            state = AgentState(raw_query=obj.goal, objective=obj, resource_pool=pool)
+            decomposer.decompose(state)
+            plan = state.plan
             print(f"SUBTASKS ({len(plan.subtasks)}):")
             for s in plan.subtasks:
                 print(f"\n  [{s.id}] {s.description}")
