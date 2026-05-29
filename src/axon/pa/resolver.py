@@ -45,6 +45,7 @@ from axon.pa.models import ResolverResult
 from axon.types import ResourceManifest
 
 if TYPE_CHECKING:
+    from axon.config import ResourcePolicyConfig
     from axon.pa.models import AgentState, Subtask
     from axon.pa.resource_cache import ResourceCache
 
@@ -90,6 +91,7 @@ class Resolver:
         affinity:        GAAffinityStore | None            = None,
         affinity_path:   Path | None                       = None,
         cache:           "ResourceCache | None"            = None,
+        policy:          "ResourcePolicyConfig | None"     = None,
         client_factory:  Callable[[str], GAClient] | None  = None,
         max_results:     int                               = 5,
         min_match_score: float                             = 0.0,
@@ -98,6 +100,7 @@ class Resolver:
         self._affinity        = affinity
         self._affinity_path   = affinity_path
         self._cache           = cache
+        self._policy          = policy
         self._client_factory  = client_factory or GAClient
         self._max_results     = max_results
         self._min_match_score = min_match_score
@@ -237,7 +240,10 @@ class Resolver:
 
             queried_any = True
 
-            # reward parcial (match + speed) deste GA — fase 1 do bandit
+            # reward parcial (match + speed) deste GA — fase 1 do bandit.
+            # Registrado ANTES do filtro de política: o UCB mede a qualidade de
+            # retrieval do GA, não é penalizado por recursos que a política do
+            # operador descarta (a restrição é do operador, não do recurso).
             if self._affinity is not None:
                 self._affinity.update_partial(
                     ga_url=ga_url,
@@ -245,6 +251,20 @@ class Resolver:
                     match_score=result.match_score,
                     latency_ms=result.latency_ms,
                 )
+
+            # Step 3 — filtro de política do operador (descarta silenciosamente)
+            allowed = self._apply_policy(
+                [result.manifest, *result.alternatives], pending
+            )
+            if not allowed:
+                logger.info(
+                    "[Resolver] step3 — todos os candidatos de %s descartados por política (subtask=%s)",
+                    ga_url, pending.subtask_id,
+                )
+                continue
+            result = result.model_copy(
+                update={"manifest": allowed[0], "alternatives": allowed[1:]}
+            )
 
             if result.match_score >= self._min_match_score:
                 if chosen is None or result.match_score > chosen.match_score:
@@ -299,6 +319,39 @@ class Resolver:
             self._affinity.ucb_score(ga, capability, total) == float("inf")
             for ga in self._gateways
         )
+
+    # ── Step 3 — filtro de política ──────────────────────────────────────────────
+
+    def _apply_policy(
+        self, manifests: list[ResourceManifest], pending: PendingCapability
+    ) -> list[ResourceManifest]:
+        """
+        Filtra os manifests pela ResourcePolicyConfig do operador, preservando a
+        ordem (best-first do GA). Descarta silenciosamente — só loga o motivo.
+        """
+        kept: list[ResourceManifest] = []
+        for m in manifests:
+            ok, reason = self._passes_policy(m)
+            if ok:
+                kept.append(m)
+            else:
+                logger.info(
+                    "[Resolver] step3 descarte subtask=%s resource=%s — %s",
+                    pending.subtask_id, m.name, reason,
+                )
+        return kept
+
+    def _passes_policy(self, manifest: ResourceManifest) -> tuple[bool, str | None]:
+        """
+        Aplica a política do operador a um manifest, via o avaliador compartilhado
+        (pa/policy.py) — mesma lógica que a CLI usa para mostrar elegibilidade.
+
+        Retorna (True, None) se passa; (False, motivos) se descartado.
+        Não toca no UCB — a restrição é do operador, não do recurso.
+        """
+        from axon.pa.policy import evaluate
+        elig = evaluate(manifest, self._policy)
+        return elig.eligible, ("; ".join(elig.reasons) if elig.reasons else None)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

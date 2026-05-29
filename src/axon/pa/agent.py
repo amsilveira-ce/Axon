@@ -87,6 +87,8 @@ class PrincipalAgent:
             affinity=self._affinity,
             affinity_path=affinity_path,
             cache=self._resource_cache,
+            policy=config.resource_policy,
+            min_match_score=config.resource_policy.match_threshold,
         )
         logger.info("[PA] resolver — %d gateway(s) configured", len(config.gateways))
 

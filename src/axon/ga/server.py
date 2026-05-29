@@ -125,19 +125,56 @@ async def list_resources_endpoint() -> dict:
         "count":     len(resources),
         "resources": [
             {
-                "id":          r.id,
-                "name":        r.name,
-                "type":        r.type.value,
-                "endpoint":    r.endpoint,
-                "description": r.description,
-                "status":      r.status.value,
+                "id":               r.id,
+                "name":             r.name,
+                "type":             r.type.value,
+                "protocol_binding": r.protocol_binding.value,
+                "endpoint":         r.endpoint,
+                "command":          r.command,
+                "auth":             r.auth.model_dump(mode="json"),
+                "policy":           r.policy.model_dump(mode="json"),
+                "description":      r.description,
+                "status":           r.status.value,
                 "skills": [
                     {"id": s.id, "description": s.description, "tags": s.tags}
-                    for s in r.skills
+                    for s in (r.skills or [])
                 ],
             }
             for r in resources
         ],
+    }
+
+
+# ── POST /pa/connect
+
+class ConnectRequest(BaseModel):
+    name:         str
+    version:      str        = "0.1.0"
+    organization: str | None = None
+    url:          str | None = None
+
+
+@app.post("/pa/connect")
+async def pa_connect(req: ConnectRequest) -> dict:
+    """Register a Principal Agent connection (PACard). Observability handshake."""
+    from axon.ga.connections import add_connection
+    from axon.ga.registry import list_resources
+    from axon.types import PACard
+
+    ga   = _ga()
+    card = PACard(
+        name=req.name, version=req.version,
+        organization=req.organization, url=req.url,
+    )
+    conn = add_connection(card, ga.paths)
+    logger.info("[GA:%s] PA connected: %s v%s", ga.context, card.name, card.version)
+
+    return {
+        "status":          "connected",
+        "gateway":         ga.name,
+        "context":         ga.context,
+        "resources_count": len(list_resources(ga.paths)),
+        "connected_at":    conn.connected_at.isoformat(),
     }
 
 
@@ -173,6 +210,7 @@ async def search_resources(req: SearchRequest) -> dict:
                 "endpoint":         r.endpoint,
                 "command":          r.command,
                 "auth":             r.auth.model_dump(mode="json"),
+                "policy":           r.policy.model_dump(mode="json"),
                 "description":      r.description,
                 "score":            round(score, 3),
                 "skills": [

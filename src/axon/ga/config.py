@@ -26,11 +26,12 @@ class GAPaths:
     """Paths absolutos de uma instância do GA derivados do data_dir."""
 
     def __init__(self, ga_dir: Path) -> None:
-        self.root      = ga_dir
-        self.registry  = ga_dir / "registry.json"
-        self.tokens    = ga_dir / "tokens.json"
-        self.traces    = ga_dir / "traces"
-        self.ga_config = ga_dir / "ga.json"
+        self.root        = ga_dir
+        self.registry    = ga_dir / "registry.json"
+        self.tokens      = ga_dir / "tokens.json"
+        self.connections = ga_dir / "connections.json"   # PAs conectados (POST /pa/connect)
+        self.traces      = ga_dir / "traces"
+        self.ga_config   = ga_dir / "ga.json"
 
     def makedirs(self) -> None:
         for d in (self.root, self.traces):

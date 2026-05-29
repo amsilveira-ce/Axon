@@ -16,7 +16,13 @@ import time
 import httpx
 
 from axon.pa.models import ResolverResult
-from axon.types import AuthConfig, ProtocolBinding, ResourceManifest, ResourceType
+from axon.types import (
+    AuthConfig,
+    ProtocolBinding,
+    ResourceManifest,
+    ResourcePolicy,
+    ResourceType,
+)
 
 
 class GAClientError(Exception):
@@ -111,4 +117,5 @@ class GAClient:
             endpoint=item.get("endpoint"),
             command=item.get("command"),
             auth=AuthConfig.model_validate(item.get("auth") or {}),
+            policy=ResourcePolicy.model_validate(item.get("policy") or {}),
         )
