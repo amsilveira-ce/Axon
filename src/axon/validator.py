@@ -53,10 +53,11 @@ class ValidationResult:
 class McpValidationResult:
     """Resultado da validação de um recurso MCP (conexão viva + tools)."""
     ok:          bool
-    tools:       list[str]   = field(default_factory=list)
-    fingerprint: str | None  = None
-    error:       str | None  = None
-    step:        str | None  = None
+    tools:       list[str]            = field(default_factory=list)   # nomes (para preview/count)
+    tool_specs:  list[dict[str, str]] = field(default_factory=list)   # {name, description} p/ matching
+    fingerprint: str | None           = None
+    error:       str | None           = None
+    step:        str | None           = None
 
 
 def validate_mcp(manifest: "ResourceManifest") -> McpValidationResult:  # type: ignore[name-defined]
@@ -75,24 +76,26 @@ def validate_mcp(manifest: "ResourceManifest") -> McpValidationResult:  # type: 
 
     from axon.ga.clients.mcp_client import MCPClient, MCPClientError
 
-    async def _probe() -> list[str]:
+    async def _probe() -> list[dict[str, str]]:
         async with MCPClient(manifest, timeout=20.0) as client:
-            return await client.list_tools()
+            return await client.list_tools_detailed()
 
     try:
-        tools = asyncio.run(_probe())
+        specs = asyncio.run(_probe())
     except MCPClientError as e:
         return McpValidationResult(ok=False, step="connect", error=str(e))
     except Exception as e:
         return McpValidationResult(ok=False, step="connect", error=str(e))
 
+    names = [s["name"] for s in specs]
     fp = fingerprint({
         "binding":  manifest.protocol_binding.value,
         "endpoint": manifest.endpoint,
         "command":  manifest.command,
-        "tools":    sorted(tools),
+        # nome + descrição → drift detectado se o servidor mudar o que oferece
+        "tools":    sorted(f"{s['name']}\n{s['description']}" for s in specs),
     })
-    return McpValidationResult(ok=True, tools=tools, fingerprint=fp)
+    return McpValidationResult(ok=True, tools=names, tool_specs=specs, fingerprint=fp)
 
 
 def _verify_token(axon_meta: AxonMetadata) -> TokenVerificationError | None:

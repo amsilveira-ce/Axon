@@ -75,3 +75,5 @@ class ExtractionTrace:
         self.history_str   = history_str
         self.memory_str    = memory_str
         self.resources_str = resources_str
+
+

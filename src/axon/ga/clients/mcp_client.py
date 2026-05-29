@@ -102,6 +102,21 @@ class MCPClient:
         tools = await self._client.list_tools()  # type: ignore[union-attr]
         return [t.name for t in tools]
 
+    async def list_tools_detailed(self) -> list[dict[str, str]]:
+        """
+        Lista as tools com nome E descrição (para matching no registro).
+
+        A descrição vem do próprio servidor MCP — é o texto rico que alimenta
+        o retrieval do GA (skill.description). Cai para o nome se o servidor
+        não declarar descrição.
+        """
+        self._assert_connected()
+        tools = await self._client.list_tools()  # type: ignore[union-attr]
+        return [
+            {"name": t.name, "description": (getattr(t, "description", None) or "").strip()}
+            for t in tools
+        ]
+
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """
         Chama uma tool MCP e retorna o resultado deserializado.

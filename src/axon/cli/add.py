@@ -263,8 +263,27 @@ def add_mcp(
         console.print(f"  {step('admission token  [green]verified[/green]')}")
         console.print(divider())
 
-    # 6. persiste
-    skills   = [A2ASkill(id=t, description=t, tags=tag or []) for t in result.tools]
+    # 6. persiste — skills carregam a descrição REAL de cada tool (matching)
+    skills = [
+        A2ASkill(
+            id=s["name"],
+            name=s["name"],
+            description=s["description"] or s["name"],
+            tags=tag or [],
+        )
+        for s in result.tool_specs
+    ]
+
+    # descrição do recurso p/ matching: usa --description, ou sintetiza uma boa
+    # a partir do nome, tools e tags (alimenta keyword + embedding do retrieval).
+    if not description:
+        caps = ", ".join(tag) if tag else "—"
+        description = (
+            f"{name}: MCP resource ({binding.value}) providing "
+            f"{len(result.tools)} tools ({', '.join(result.tools)}). "
+            f"Capabilities: {caps}."
+        )
+
     resource = Resource(
         id=manifest.resource_id, type=ResourceType.mcp, protocol_binding=binding,
         name=name, endpoint=endpoint, command=command, description=description,

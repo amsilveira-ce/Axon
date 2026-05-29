@@ -229,8 +229,13 @@ Each registered resource lives in `.axon/ga/{context}/registry.json` as a
   `command` (stdio)
 - `auth` — the full `AuthConfig` (scheme, location, header/param, env var name,
   scopes) so the PA can rebuild the manifest later
-- `skills` — one per discovered tool (the tool name), used for retrieval
-- `fingerprint` — detects drift if the server's tool set changes
+- `skills` — one per discovered tool, carrying the tool's **real description**
+  fetched from the server. This rich text is what feeds retrieval matching
+  (`skill.description` + `skill.tags`).
+- `description` — a synthesized summary (name + tool names + capability tags)
+  when `--description` is not given, so the resource itself is matchable too
+- `fingerprint` — covers tool names **and** descriptions, so it detects drift if
+  the server changes what it offers
 - `token_ref` — the admission token, if one was used
 
 **Secrets are never stored.** The registry holds only the *name* of the env var,
