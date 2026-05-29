@@ -14,6 +14,7 @@ from axon.cli.ga  import init    as ga_init_cmd
 from axon.cli.ga  import use     as ga_use
 from axon.cli.ga  import list    as ga_list_cmd
 from axon.cli.ga  import resource as ga_resource
+from axon.cli.ga  import config  as ga_config
 
 app = typer.Typer(
     name="axon",
@@ -43,6 +44,7 @@ ga_app.add_typer(ga_init_cmd.app, name="init",     invoke_without_command=True)
 ga_app.add_typer(ga_use.app,      name="use",      invoke_without_command=True)
 ga_app.add_typer(ga_list_cmd.app, name="list",     invoke_without_command=True)
 ga_app.add_typer(ga_resource.app, name="resource", invoke_without_command=True)
+ga_app.add_typer(ga_config.app,   name="config",   invoke_without_command=True)
 app.add_typer(ga_app, name="ga")
 
 if __name__ == "__main__":

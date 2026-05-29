@@ -28,9 +28,21 @@ def _bootstrap_files(p: AxonPaths, ga_dir: Path) -> None:
         p.pa_memory_bank:    {"version": "0.1.0", "entries": []},
         p.pa_local_tools:    DEFAULT_LOCAL_TOOLS,
     }
+    ga_json_default = {
+        "name":               "Axon Local Gateway",
+        "description":        "",
+        "organization":       None,
+        "trust_level":        "local",
+        "port":               5000,
+        "data_dir":           str(ga_dir),
+        "version":            "0.1.0",
+        "retrieval_strategy": "keyword",
+        "embedding_model":    None,
+    }
     ga_defaults = {
-        gp.registry: {"version": "0.1.0", "resources": []},
-        gp.tokens:   {"version": "0.1.0", "tokens": []},
+        gp.registry:  {"version": "0.1.0", "resources": []},
+        gp.tokens:    {"version": "0.1.0", "tokens": []},
+        gp.ga_config: ga_json_default,
     }
 
     for path, content in {**pa_defaults, **ga_defaults}.items():
