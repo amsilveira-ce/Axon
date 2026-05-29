@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -291,6 +292,7 @@ class Resolver:
         state.resource_assignments[pending.subtask_id] = chosen
         state.resource_pool.append(chosen.manifest)        # disponível no resto desta run
         if self._cache is not None:
+            chosen.manifest.last_used = datetime.now(timezone.utc)   # marca descoberta/refresh
             self._cache.put(chosen.manifest)               # persiste p/ a próxima run → cache hit
         logger.info(
             "[Resolver] step2 ✓ subtask=%s capability=%s → %s via %s (match=%.2f, %.0fms)",

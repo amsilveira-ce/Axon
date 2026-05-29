@@ -105,8 +105,8 @@ Each query produces a reward in `[0,1]` combining three signals, in two phases:
 
 | phase | when | signals | weight |
 |-------|------|---------|--------|
-| `update_partial` | at resolution | match quality + answer speed | `W_MATCH=0.4`, `W_SPEED=0.2` |
-| `update_final` | after execution | did the chosen resource run successfully? | `W_EXEC=0.4` |
+| `update_partial` | at resolution | match quality + answer speed | `W_MATCH=0.5`, `W_SPEED=0.3` |
+| `update_final` | after execution | did the chosen resource run successfully? | `W_EXEC=0.2` |
 
 `update_partial` is recorded the moment a GA answers — it measures the gateway's
 **retrieval quality**, independent of whether the operator's policy later allows

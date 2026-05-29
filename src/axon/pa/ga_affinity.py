@@ -33,9 +33,11 @@ from pydantic import BaseModel
 
 
 # pesos do reward (somam 1.0) — calibração livre do operador
-W_MATCH = 0.4
-W_SPEED = 0.2
-W_EXEC  = 0.4
+#   parcial (resolução): match×W_MATCH + speed×W_SPEED
+#   final (execução):    + success×W_EXEC  (adicionado pelo Executor)
+W_MATCH = 0.5
+W_SPEED = 0.3
+W_EXEC  = 0.2
 
 # constante de exploração do UCB1 (o "2" clássico de reward_mean + √(2·lnN/n))
 _UCB_C = 2.0
