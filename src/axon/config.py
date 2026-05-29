@@ -211,6 +211,27 @@ class ConnectedGateway(BaseModel):
     last_seen:    datetime | None  = None
 
 
+class ResourcePolicyConfig(BaseModel):
+    """
+    Política do operador — define quais recursos o PA está autorizado a usar.
+
+    Aplicada pelo Resolver antes de entregar o ResourceManifest ao Executor.
+    O Executor não sabe nada de política — apenas executa.
+
+    allow_paid:         PA pode usar recursos com is_paid=true?
+    max_cost_per_call:  custo máximo por chamada em USD (None = sem limite)
+    require_auth_setup: descartar recursos que exigem auth sem token configurado?
+    fallback_strategy:  o que fazer quando nenhum recurso é elegível
+      "skip"     → ignora a subtask, continua o plano
+      "fail"     → interrompe com erro
+      "ask_user" → retorna ClarificationNeeded ao usuário
+    """
+    allow_paid:          bool                              = True
+    max_cost_per_call:   float | None                      = None
+    require_auth_setup:  bool                              = False
+    fallback_strategy:   Literal["skip", "fail", "ask_user"] = "ask_user"
+
+
 class PAConfig(BaseModel):
     port:              int                   = 4100
     default_reasoning: str                   = "react"
@@ -220,7 +241,8 @@ class PAConfig(BaseModel):
     budget:            BudgetConfig          = Field(default_factory=BudgetConfig)
     conversation:      ConversationConfig    = Field(default_factory=ConversationConfig)
     cache:             CacheConfig           = Field(default_factory=CacheConfig)
-    intent_extractor:  IntentExtractorConfig = Field(default_factory=IntentExtractorConfig)
+    intent_extractor:  IntentExtractorConfig  = Field(default_factory=IntentExtractorConfig)
+    resource_policy:   ResourcePolicyConfig   = Field(default_factory=ResourcePolicyConfig)
 
 
 class AxonConfig(BaseModel):

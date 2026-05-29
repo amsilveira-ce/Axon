@@ -165,8 +165,8 @@ def gateway_add(
 
 @app.command("list")
 def gateway_list() -> None:
-    """List connected Gateway Agents."""
-    from axon.config import read_config
+    """List connected Gateway Agents with live status."""
+    from axon.config import read_config, patch_config
 
     try:
         cfg = read_config()
@@ -175,8 +175,6 @@ def gateway_list() -> None:
 
     gateways = cfg.pa.gateways
     console.print()
-    console.print("  [bold]GATEWAYS[/bold]")
-    console.print()
 
     if not gateways:
         console.print(info("[dim]no gateways connected[/dim]"))
@@ -184,26 +182,41 @@ def gateway_list() -> None:
         console.print()
         return
 
-    for g in gateways:
-        trust_color = {
-            "local":   "[green]local[/green]",
-            "vendor":  "[cyan]vendor[/cyan]",
-            "unknown": "[yellow]unknown[/yellow]",
-        }.get(g.trust_level, f"[dim]{g.trust_level}[/dim]")
+    now     = datetime.now(timezone.utc)
+    updated = list(gateways)
+    online  = 0
 
-        last_seen = g.last_seen.strftime("%Y-%m-%d %H:%M") if g.last_seen else "never"
+    for i, g in enumerate(gateways):
+        # ping ao vivo
+        try:
+            raw        = _fetch_gateway_card(g.url)
+            card, meta = _parse_card(raw)
+            resources  = meta.resources_count if meta else 0
+            status     = "[green]✓[/green]"
+            status_txt = "online"
+            updated[i] = g.model_copy(update={"last_seen": now})
+            online += 1
+        except RuntimeError:
+            status     = "[red]✗[/red]"
+            status_txt = "offline"
+            resources  = None
 
-        console.print(f"  {step(f'[bold]{g.name}[/bold]  {trust_color}')}")
-        console.print(info(f"[dim]url        {g.url}[/dim]"))
-        console.print(info(f"[dim]version    {g.version}[/dim]"))
-        if g.organization:
-            console.print(info(f"[dim]org        {g.organization}[/dim]"))
-        console.print(info(f"[dim]last seen  {last_seen}[/dim]"))
-        console.print(divider())
+        # linha compacta: ✓  GA Corporativo    http://...   online
+        name_col = f"[bold]{g.name}[/bold]"
+        url_col  = f"[dim]{g.url}[/dim]"
+        stat_col = f"[green]online[/green]" if status_txt == "online" else "[red]offline[/red]"
+        res_col  = f"[dim]{resources} resources[/dim]" if resources is not None else "[dim]—[/dim]"
+
+        console.print(f"  {status}  {name_col:<30} {url_col:<45} {stat_col}  {res_col}")
 
     console.print()
-    console.print(info(f"[dim]{len(gateways)} gateway(s) connected[/dim]"))
+    console.print(info(f"[dim]{online}/{len(gateways)} online[/dim]"))
     console.print()
+
+    # persiste last_seen atualizado
+    patch_config(lambda c: c.model_copy(update={
+        "pa": c.pa.model_copy(update={"gateways": updated})
+    }))
 
 
 # ── remove ────────────────────────────────────────────────────────────────────
