@@ -28,6 +28,7 @@ def intent_test(
     from axon.config import read_config, paths
     from axon.pa.agent import PrincipalAgent
     from axon.pa.decomposer import Decomposer
+    from axon.pa.planner import Planner, PlanError
 
     try:
         config = read_config()
@@ -98,6 +99,7 @@ def intent_test(
     from axon.pa.models import AgentState
 
     decomposer = Decomposer(config.pa)
+    planner    = Planner()
 
     try:
         state = AgentState(
@@ -106,12 +108,25 @@ def intent_test(
             resource_pool=agent._local_pool.tools + agent._resource_cache.all(),
         )
         decomposer.decompose(state)
-        plan = state.plan
     except Exception as exc:
         fatal(f"Decomposer error: {exc}")
 
+    try:
+        planner.plan(state)
+    except PlanError as exc:
+        console.print()
+        console.print(warn(f"[bold]PlanError[/bold]  [dim]{exc}[/dim]"))
+        console.print()
+        return
+
+    plan = state.plan
+
+    # ordem topológica
+    topo_order = " → ".join(s.id for s in plan.subtasks)
+
     console.print()
     console.print(f"  {ok(f'[bold]plan[/bold]  [dim]{len(plan.subtasks)} subtask(s)[/dim]')}")
+    console.print(info(f"[dim]order  {topo_order}[/dim]"))
     console.print()
 
     for s in plan.subtasks:
@@ -122,7 +137,9 @@ def intent_test(
         if s.input_artifacts:
             console.print(info(f"inputs      [dim]{', '.join(s.input_artifacts)}[/dim]"))
         if s.depends_on:
-            console.print(info(f"depends_on  [dim]{', '.join(s.depends_on)}[/dim]"))
+            console.print(info(f"depends_on  [green]{', '.join(s.depends_on)}[/green]"))
+        else:
+            console.print(info(f"depends_on  [dim]none (root)[/dim]"))
         if s.params_template:
             for k, v in s.params_template.items():
                 console.print(info(f"param [{k}]  [dim]{v}[/dim]"))
@@ -130,4 +147,6 @@ def intent_test(
             console.print(info("[dim]optional[/dim]"))
         console.print(divider())
 
+    console.print()
+    console.print(info(f"[dim]state.progress: {dict(state.progress)}[/dim]"))
     console.print()

@@ -8,6 +8,7 @@ from axon.llms.ollama_client import OllamaClient
 from axon.pa.context.conversation import ConversationHistory
 from axon.pa.context.memory import MemoryBank
 from axon.pa.decomposer import Decomposer
+from axon.pa.planner import Planner, PlanError
 from axon.pa.intent_extractor import ExtractionTrace, IntentExtractor
 from axon.pa.local_pool import LocalResourcePool
 from axon.pa.models import AgentState, ClarificationNeeded, Objective, Plan
@@ -53,6 +54,7 @@ class PrincipalAgent:
 
         self._intent_extractor = IntentExtractor(config)
         self._decomposer       = Decomposer(config)
+        self._planner          = Planner()
         self.last_trace: ExtractionTrace | None = None
 
         # paths
@@ -151,7 +153,50 @@ class PrincipalAgent:
 
         # Step 4 — Decomposer lê state.objective + state.resource_pool
         #           escreve state.plan
-        self._decomposer.decompose(state)
+        try:
+            self._decomposer.decompose(state)
+        except Exception as exc:
+            logger.error("[PA] decomposer raised: %s", exc)
+            response = (
+                f"I was unable to decompose your request into steps.\n"
+                f"Reason: {exc}\n\n"
+                f"Please rephrase your query and try again."
+            )
+            self._history.add_message("assistant", response, llm_client=self._llm_client)
+            self._persist_session()
+            return response
+
+        # detecta plano fallback — subtask com status FAILED
+        if _is_fallback_plan(state.plan):
+            reason = state.plan.subtasks[0].description if state.plan.subtasks else "unknown"
+            logger.warning("[PA] decomposer returned fallback plan — %s", reason)
+            response = (
+                f"I was unable to break down your request into executable steps.\n\n"
+                f"{reason}\n\n"
+                f"Suggestions:\n"
+                f"  - Be more specific about what you want to achieve\n"
+                f"  - Break the request into smaller parts\n"
+                f"  - Check if the required capabilities are available (axon pa tools list)"
+            )
+            self._history.add_message("assistant", response, llm_client=self._llm_client)
+            self._persist_session()
+            return response
+
+        # Step 5 — Planner lê state.plan.subtasks
+        #           resolve depends_on, valida, ordena
+        #           escreve state.plan + state.progress
+        try:
+            self._planner.plan(state)
+        except PlanError as exc:
+            logger.error("[PA] planner raised: %s", exc)
+            response = (
+                f"The execution plan is inconsistent and cannot be scheduled.\n"
+                f"Reason: {exc}\n\n"
+                f"Please rephrase your query and try again."
+            )
+            self._history.add_message("assistant", response, llm_client=self._llm_client)
+            self._persist_session()
+            return response
 
         # 3. Resolver (pendente)
         # self._resolver.resolve(state)
@@ -231,6 +276,24 @@ class PrincipalAgent:
                 lines.append(f"    depends_on : {', '.join(s.depends_on)}")
         lines.extend(["", "[resolver not implemented — next step]"])
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+#   Plan helpers
+# ---------------------------------------------------------------------------
+
+def _is_fallback_plan(plan: "Plan") -> bool:
+    """
+    Detecta se o Decomposer retornou um plano fallback.
+    Planos fallback têm exactamente 1 subtask com id="subtask-fallback"
+    e status=FAILED.
+    """
+    from axon.pa.models import SubtaskStatus
+    return (
+        len(plan.subtasks) == 1
+        and plan.subtasks[0].id == "subtask-fallback"
+        and plan.subtasks[0].status == SubtaskStatus.FAILED
+    )
 
 
 # ---------------------------------------------------------------------------

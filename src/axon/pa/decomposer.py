@@ -236,11 +236,11 @@ class Decomposer:
                 context,
                 system=self._system,
                 temperature=0.0,
-                format=self._schema,
-                think=False,
+                format=None,    # schema livre — parser cascade cuida do resto
+                think=True,     # raciocínio livre melhora depends_on e params
                 retries=2,
             )
-            logger.debug("[Decomposer] raw:\n%s", raw)
+            logger.debug("[Decomposer] raw response:\n%s", raw)
             return raw
         except OllamaConnectionError:
             logger.error("[Decomposer] LLM unreachable")
@@ -258,64 +258,92 @@ class Decomposer:
           2. <output>...</output>
           3. ```json ... ```
           4. bare JSON array
-          5. fallback — plano de um único passo
+          5. fallback com motivo explícito
         """
         available = _normalize_capabilities(resource_pool)
 
-        json_str = (
-            _try_direct_array(raw)
-            or _extract_tag(raw, "output")
-            or _extract_markdown_json(raw)
-            or _extract_bare_array(raw)
-        )
+        # nível 1 — array direto
+        json_str = _try_direct_array(raw)
+
+        # nível 2 — tag <output>
+        if not json_str:
+            json_str = _extract_tag(raw, "output")
+            if json_str:
+                logger.debug("[Decomposer] extracted from <output> tag")
+
+        # nível 3 — markdown json
+        if not json_str:
+            json_str = _extract_markdown_json(raw)
+            if json_str:
+                logger.warning("[Decomposer] markdown json fallback used")
+
+        # nível 4 — bare array no texto
+        if not json_str:
+            json_str = _extract_bare_array(raw)
+            if json_str:
+                logger.warning("[Decomposer] bare array fallback used")
 
         if not json_str:
-            logger.warning("[Decomposer] could not extract JSON — fallback plan")
-            return _fallback_plan()
+            logger.warning(
+                "[Decomposer] all parse levels failed — raw response (first 500 chars):\n%s",
+                raw[:500],
+            )
+            return _fallback_plan("LLM response did not contain a valid JSON array")
 
         try:
             data = json.loads(json_str)
         except json.JSONDecodeError as e:
-            logger.warning("[Decomposer] JSON decode failed: %s", e)
-            return _fallback_plan()
+            logger.warning("[Decomposer] JSON decode failed: %s\nExtracted: %s", e, json_str[:300])
+            return _fallback_plan(f"JSON decode error: {e}")
 
+        # normaliza wrapper {"subtasks": [...]}
         if not isinstance(data, list):
-            # às vezes o modelo envolve em {"subtasks": [...]}
             if isinstance(data, dict):
                 data = (
                     data.get("subtasks")
                     or data.get("tasks")
                     or data.get("steps")
+                    or data.get("root")
                     or []
                 )
             if not isinstance(data, list):
-                logger.warning("[Decomposer] expected list, got %s", type(data))
-                return _fallback_plan()
+                logger.warning("[Decomposer] expected list, got %s — raw: %s", type(data).__name__, json_str[:200])
+                return _fallback_plan(f"unexpected JSON shape: {type(data).__name__}")
 
         subtasks: list[Subtask] = []
+        validation_errors: list[str] = []
+
         for i, item in enumerate(data):
             if not isinstance(item, dict):
                 continue
             try:
-                # garante id único
                 if not item.get("id"):
                     item["id"] = f"subtask-{i + 1}"
 
-                # capability matching
                 cap = item.get("capability_required", "")
                 item["capability_required"] = _match_capability(cap, available)
 
-                # ReWOO — strategy sempre REWOO
                 item["execution_strategy"] = ExecutionStrategy.REWOO.value
                 item["status"]             = SubtaskStatus.PENDING.value
 
                 subtasks.append(Subtask(**item))
             except (ValidationError, TypeError) as e:
-                logger.warning("[Decomposer] Subtask build failed for item %d: %s", i, e)
-                continue
+                msg = f"item {i} ({item.get('id', '?')}): {e}"
+                validation_errors.append(msg)
+                logger.warning("[Decomposer] Subtask validation failed — %s", msg)
+
+        if validation_errors and not subtasks:
+            reason = f"{len(validation_errors)} subtask(s) failed validation: {validation_errors[0]}"
+            return _fallback_plan(reason)
 
         if not subtasks:
-            return _fallback_plan()
+            return _fallback_plan("LLM returned an empty subtask list")
+
+        if validation_errors:
+            logger.warning(
+                "[Decomposer] %d/%d subtask(s) failed validation — proceeding with %d valid",
+                len(validation_errors), len(data), len(subtasks),
+            )
 
         return subtasks
 
@@ -372,15 +400,16 @@ def _extract_bare_array(text: str) -> str | None:
     return None
 
 
-def _fallback_plan() -> list[Subtask]:
+def _fallback_plan(reason: str = "unknown error") -> list[Subtask]:
+    logger.error("[Decomposer] fallback plan — reason: %s", reason)
     return [
         Subtask(
-            id="subtask-1",
-            description="Could not decompose the objective — please rephrase your query.",
+            id="subtask-fallback",
+            description=f"Decomposition failed: {reason}. Please rephrase your query.",
             capability_required="general",
             params_template={},
             execution_strategy=ExecutionStrategy.REWOO,
-            status=SubtaskStatus.PENDING,
+            status=SubtaskStatus.FAILED,
         )
     ]
 
