@@ -102,18 +102,27 @@ class GAClient:
 
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _to_manifest(item: dict, capability: str) -> ResourceManifest:
-        """Reconstrói um ResourceManifest executável a partir de um result do /search."""
-        tags = sorted({t for s in item.get("skills", []) for t in s.get("tags", [])})
+    def _to_manifest(self, item: dict, capability: str) -> ResourceManifest:
+        """
+        Reconstrói um ResourceManifest a partir de um result do /search.
+
+        callable_by é decidido pelo transporte:
+          mcp_stdio → ga_proxy — o PA não pode rodar o comando de um servidor
+                      remoto; o GA executa em nome do PA (ga_url aponta o GA).
+          demais    → pa_direct — A2A e MCP HTTP/SSE o PA chama direto.
+        """
+        binding = ProtocolBinding(item["protocol_binding"])
+        tags    = sorted({t for s in item.get("skills", []) for t in s.get("tags", [])})
+        proxied = binding == ProtocolBinding.MCP_STDIO
         return ResourceManifest(
             resource_id=item["id"],
             name=item["name"],
             type=ResourceType(item["type"]),
-            protocol_binding=ProtocolBinding(item["protocol_binding"]),
+            protocol_binding=binding,
             description=item.get("description", ""),
             capability_tags=tags or [capability],
-            callable_by="pa_direct",
+            callable_by="ga_proxy" if proxied else "pa_direct",
+            ga_url=self._base if proxied else None,
             endpoint=item.get("endpoint"),
             command=item.get("command"),
             auth=AuthConfig.model_validate(item.get("auth") or {}),
