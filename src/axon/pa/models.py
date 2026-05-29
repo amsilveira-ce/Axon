@@ -1,9 +1,22 @@
+"""
+Complemento para pa/models.py
+Adicione ao final do arquivo existente.
+ 
+Importações necessárias no topo do arquivo:
+  from datetime import datetime, timezone
+  from uuid import uuid4
+  from axon.types import ResourceManifest
+"""
+ 
 from __future__ import annotations
-
+ 
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
-
+from typing import Any
+from uuid import uuid4
+from typing import Literal
 from pydantic import BaseModel, Field
+from axon.types import ResourceManifest
 
 
 # ---------------------------------------------------------------------------
@@ -77,3 +90,261 @@ class ExtractionTrace:
         self.resources_str = resources_str
 
 
+
+
+
+# ---------------------------------------------------------------------------
+#   Enums de execução
+# ---------------------------------------------------------------------------
+ 
+class ExecutionStrategy(str, Enum):
+    REACT  = "react"
+    REWOO  = "rewoo"
+ 
+ 
+class SubtaskStatus(str, Enum):
+    PENDING   = "pending"
+    RUNNING   = "running"
+    COMPLETED = "completed"
+    FAILED    = "failed"
+    SKIPPED   = "skipped"
+ 
+ 
+class Provenance(str, Enum):
+    A2A   = "a2a"
+    MCP   = "mcp"
+    LOCAL = "local"
+ 
+ 
+# ---------------------------------------------------------------------------
+#   Plano
+# ---------------------------------------------------------------------------
+ 
+class Subtask(BaseModel):
+    """
+    Unidade mínima de trabalho do plano.
+    Delegável a um único recurso.
+    Contrato de entrada e saída via artefatos nomeados.
+ 
+    params_template:
+      ReAct  → vazio — Executor decide em runtime
+      ReWOO  → completo — usa {{artifact:nome}} para referenciar outputs anteriores
+    """
+    id:                  str
+    description:         str
+    capability_required: str
+ 
+    input_artifacts:     list[str]         = Field(default_factory=list)
+    output_artifact:     str | None        = None
+ 
+    params_template:     dict[str, Any]    = Field(default_factory=dict)
+ 
+    execution_strategy:  ExecutionStrategy = ExecutionStrategy.REACT
+    depends_on:          list[str]         = Field(default_factory=list)
+    is_optional:         bool              = False
+    status:              SubtaskStatus     = SubtaskStatus.PENDING
+ 
+ 
+class Plan(BaseModel):
+    """
+    Output do Decomposer + Planner.
+    depends_on preenchido pelo Planner via matching de artefatos.
+    """
+    subtasks: list[Subtask] = Field(default_factory=list)
+
+# ---------------------------------------------------------------------------
+#   Execução — append-only
+# ---------------------------------------------------------------------------
+ 
+class Fact(BaseModel):
+    """
+    Resultado de uma subtask bem sucedida.
+    Append-only — nunca modificado após criação.
+    """
+    subtask_id:  str
+    tool:        str
+    output:      Any
+    provenance:  Provenance
+    timestamp:   datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+ 
+ 
+class Failure(BaseModel):
+    """
+    Falha em uma subtask.
+    Append-only — nunca modificado após criação.
+    """
+    subtask_id:  str
+    tool:        str | None    # None se falhou antes de chegar ao recurso
+    error:       str
+    reason:      str
+    timestamp:   datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+ 
+
+
+# ---------------------------------------------------------------------------
+#   Memória de trabalho da run
+# ---------------------------------------------------------------------------
+ 
+class ScratchpadEntry(BaseModel):
+    """
+    Uma iteração do loop de execução.
+ 
+    ReAct:  reason + action + observation (raciocínio completo)
+    ReWOO:  action + observation (reason vazio — planejado upfront)
+    """
+    step:        int
+    subtask_id:  str
+    reason:      str = ""
+    action:      str
+    observation: str
+    timestamp:   datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+ 
+
+# ---------------------------------------------------------------------------
+#   Controle de orçamento
+# ---------------------------------------------------------------------------
+ 
+class Budget(BaseModel):
+    """
+    Controle de recursos consumidos na run.
+    Lido e escrito pelo BudgetGuard antes de cada chamada LLM e tool call.
+    Limites copiados do PAConfig.budget no início da run.
+    """
+    # consumido
+    tokens_used:  int   = 0
+    cost_usd:     float = 0.0
+    calls_used:   int   = 0
+    elapsed_ms:   float = 0.0
+ 
+    # limites
+    tokens_max:   int   = 60_000
+    cost_max_usd: float = 0.50
+    calls_max:    int   = 40
+    timeout_ms:   float = 120_000.0
+ 
+    def is_exceeded(self) -> bool:
+        return (
+            self.tokens_used  >= self.tokens_max  or
+            self.cost_usd     >= self.cost_max_usd or
+            self.calls_used   >= self.calls_max    or
+            self.elapsed_ms   >= self.timeout_ms
+        )
+ 
+    def remaining_tokens(self) -> int:
+        return max(0, self.tokens_max - self.tokens_used)
+ 
+
+# ---------------------------------------------------------------------------
+#   AgentState — objeto de run
+# ---------------------------------------------------------------------------
+ 
+class AgentState(BaseModel):
+    """
+    Objeto central que representa uma run do Principal Agent.
+ 
+    Criado quando agent.py recebe uma query do usuário.
+    Encerrado quando o Executor conclui ou o BudgetGuard interrompe.
+    Persiste em .axon/pa/traces/{session_id}/{request_id}.json
+ 
+    Responsabilidade de escrita por componente:
+      raw_query      → agent.py na criação
+      objective      → IntentExtractor
+      plan           → Decomposer + Planner
+      resource_pool  → LocalResourcePool (startup) + Resolver (durante run)
+      facts          → Executor (append-only)
+      failures       → Executor (append-only)
+      progress       → Executor (por subtask)
+      scratchpad     → Executor (por iteração do loop)
+      budget         → BudgetGuard (antes de cada chamada)
+      tool_cache     → Executor (evita chamadas duplicadas na mesma run)
+    """
+ 
+    # rastreabilidade
+    session_id:    str = Field(default_factory=lambda: str(uuid4())[:12])
+    request_id:    str = Field(default_factory=lambda: str(uuid4())[:8])
+    created_at:    datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+ 
+    # entrada
+    raw_query:     str = ""
+ 
+    # intenção — IntentExtractor
+    objective:     Objective | None = None
+ 
+    # plano — Decomposer + Planner
+    plan:          Plan = Field(default_factory=Plan)
+ 
+    # recursos disponíveis para esta run
+    # pré-populado no startup com LocalResourcePool + ResourceCache
+    # expandido pelo Resolver durante a run
+    resource_pool: list[ResourceManifest] = Field(default_factory=list)
+ 
+    # resultados (append-only)
+    facts:         list[Fact]    = Field(default_factory=list)
+    failures:      list[Failure] = Field(default_factory=list)
+ 
+    # progresso — { subtask_id: SubtaskStatus }
+    progress:      dict[str, SubtaskStatus] = Field(default_factory=dict)
+ 
+    # memória de trabalho da run
+    scratchpad:    list[ScratchpadEntry] = Field(default_factory=list)
+ 
+    # orçamento
+    budget:        Budget = Field(default_factory=Budget)
+ 
+    # cache de chamadas na run — evita duplicatas
+    # { "tool:params_hash": result }
+    tool_cache:    dict[str, Any] = Field(default_factory=dict)
+ 
+    # ── helpers ───────────────────────────────────────────────────────────────
+ 
+    def get_fact(self, subtask_id: str) -> Fact | None:
+        """Retorna o Fact de uma subtask pelo id."""
+        return next(
+            (f for f in self.facts if f.subtask_id == subtask_id), None
+        )
+ 
+    def get_artifact(self, name: str) -> Any | None:
+        """
+        Busca o output de uma subtask pelo nome do output_artifact.
+        Usado pelo Executor para resolver {{artifact:nome}} no ReWOO.
+        """
+        subtask = next(
+            (s for s in self.plan.subtasks if s.output_artifact == name),
+            None
+        )
+        if not subtask:
+            return None
+        fact = self.get_fact(subtask.id)
+        return fact.output if fact else None
+ 
+    def get_resource(self, capability: str) -> ResourceManifest | None:
+        """Busca recurso no resource_pool por capability_tag."""
+        return next(
+            (r for r in self.resource_pool if capability in r.capability_tags),
+            None
+        )
+ 
+    def is_complete(self) -> bool:
+        """Todas as subtasks obrigatórias completadas."""
+        return all(
+            self.progress.get(s.id) == SubtaskStatus.COMPLETED
+            for s in self.plan.subtasks
+            if not s.is_optional
+        )
+ 
+    def has_failed(self) -> bool:
+        """Alguma subtask obrigatória falhou."""
+        return any(
+            self.progress.get(s.id) == SubtaskStatus.FAILED
+            for s in self.plan.subtasks
+            if not s.is_optional
+        )
+ 
