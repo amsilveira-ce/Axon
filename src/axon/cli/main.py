@@ -9,6 +9,7 @@ from axon.cli.pa  import skills  as pa_skills
 from axon.cli.pa  import config  as pa_config
 from axon.cli.pa  import tools   as pa_tools
 from axon.cli.pa  import gateway as pa_gateway
+from axon.cli.pa  import policy  as pa_policy
 from axon.cli.pa  import test    as pa_test
 from axon.cli.ga  import serve   as ga_serve
 from axon.cli.ga  import init    as ga_init_cmd
@@ -37,6 +38,7 @@ pa_app.add_typer(pa_skills.app,  name="skills",  invoke_without_command=True)
 pa_app.add_typer(pa_config.app,  name="config",  invoke_without_command=True)
 pa_app.add_typer(pa_tools.app,   name="tools",   invoke_without_command=True)
 pa_app.add_typer(pa_gateway.app, name="gateway", invoke_without_command=True)
+pa_app.add_typer(pa_policy.app,  name="policy",  invoke_without_command=True)
 pa_app.add_typer(pa_test.app,    name="intent",  invoke_without_command=True)
 app.add_typer(pa_app, name="pa")
 

@@ -176,6 +176,8 @@ def add_mcp(
     env_var:     str | None = typer.Option(None, "--env-var", help="Env var que guarda o segredo"),
     scope:       list[str]  = typer.Option(None, "--scope",   help="OAuth scope (repetível)"),
     tag:         list[str]  = typer.Option(None, "--tag",     help="Capability tag (repetível)"),
+    paid:        bool       = typer.Option(False, "--paid/--free", help="Recurso cobra por chamada?"),
+    cost_per_call: float | None = typer.Option(None, "--cost-per-call", help="Custo estimado em USD por chamada"),
     token:       str | None = typer.Option(None, "--token",   help="Token de admissão Axon (axon_tk_...) — opcional"),
     description: str        = typer.Option("", "--description", help="Descrição do recurso"),
 ) -> None:
@@ -195,7 +197,7 @@ def add_mcp(
     from axon.ga.tokens import verify_local, mark_used, TokenVerificationError
     from axon.types import (
         AuthConfig, AuthScheme, AuthLocation, A2ASkill,
-        ProtocolBinding, Resource, ResourceManifest, ResourceStatus, ResourceType,
+        ProtocolBinding, Resource, ResourceManifest, ResourcePolicy, ResourceStatus, ResourceType,
     )
     from axon.validator import validate_mcp
 
@@ -284,11 +286,17 @@ def add_mcp(
             f"Capabilities: {caps}."
         )
 
+    policy_cfg = ResourcePolicy(
+        is_paid=paid,
+        requires_auth=(scheme != AuthScheme.none),
+        cost_per_call=cost_per_call,
+    )
+
     resource = Resource(
         id=manifest.resource_id, type=ResourceType.mcp, protocol_binding=binding,
         name=name, endpoint=endpoint, command=command, description=description,
         skills=skills, fingerprint=result.fingerprint or "",
-        auth=auth_cfg, token_ref=token, status=ResourceStatus.online,
+        auth=auth_cfg, policy=policy_cfg, token_ref=token, status=ResourceStatus.online,
     )
     try:
         add_resource(resource, ga.paths)
@@ -306,9 +314,15 @@ def add_mcp(
 
     console.print()
     console.print(f"  {ok(f'[bold]{name}[/bold] registered')}\n")
+    pricing_display = (
+        ("paid" + (f" (${cost_per_call:.4f}/call)" if cost_per_call is not None else ""))
+        if paid else "free"
+    )
+
     console.print(info(f"id          [dim]{resource.id}[/dim]"))
     console.print(info(f"type        [dim]mcp ({binding.value})[/dim]"))
     console.print(info(f"auth        [dim]{auth_display}[/dim]"))
+    console.print(info(f"pricing     [dim]{pricing_display}[/dim]"))
     console.print(info(f"tools       [dim]{tools_preview or '—'}[/dim]"))
     if endpoint:
         console.print(info(f"endpoint    [dim]{endpoint}[/dim]"))
