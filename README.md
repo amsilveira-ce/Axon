@@ -108,6 +108,8 @@ See [Getting started](docs/getting-started.md) for the full walkthrough, includi
 - [The context layer](docs/context-layer.md) — how the Principal Agent remembers things across turns
 - [Skills](docs/skills.md) — steer how the Principal Agent understands requests
 - [Local tools](docs/local-tools.md) — give the Principal Agent tools it can call directly
+- [Third-party MCP resources](docs/mcp-resources.md) — register and call MCP servers you don't own
+- [Resource resolution](docs/resolver.md) — how the Resolver picks resources, ranks gateways, and applies policy
 - [CLI reference](docs/cli.md) — every available command
 
 ## License

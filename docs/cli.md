@@ -13,12 +13,14 @@ reference you come back to.
 |---|---|
 | `axon init` | Create a workspace (`axon.config.json` + `.axon/`) in the current directory |
 | `axon token` | Create, list, and revoke registration tokens for agents and tools |
-| `axon add` | Register an A2A agent with the Gateway |
+| `axon add` | Register a resource with the Gateway — an A2A agent or an MCP server |
 | `axon pa run` | Send a one-shot query to the Principal Agent |
 | `axon pa chat` | Start an interactive session with the Principal Agent |
 | `axon pa config` | Show or edit the Principal Agent configuration |
 | `axon pa skills` | Manage the skill files that steer intent extraction |
 | `axon pa tools` | Manage the local MCP tools the Principal Agent can call directly |
+| `axon pa gateway` | Connect to Gateway Agents and inspect their resources |
+| `axon pa policy` | Show or edit the resource policy the Resolver enforces |
 | `axon ga` | Gateway Agent commands (serve, list and ping resources) |
 
 Every command supports `--help`. Running a command group with no subcommand
@@ -114,6 +116,52 @@ The agent must be running and expose an agent card at
 validates the token, runs a health check, and stores the resource in the
 registry.
 
+### axon add mcp
+
+Registers a third-party **MCP server** (Tavily, Resend, Notion, …). Unlike an
+A2A agent, the server carries no Axon token, so it is proven valid by a **live
+connection**: Axon connects, calls `list_tools()`, and fingerprints the result.
+See [Third-party MCP resources](mcp-resources.md) for the full model.
+
+```bash
+axon add mcp <name> ( --http <url> | --sse <url> | --stdio "<cmd>" ) [options]
+```
+
+Exactly one transport is required.
+
+| Argument / Flag | Description |
+|---|---|
+| `<name>` | Resource name, e.g. `tavily` (also drives the `AXON_SECRET_<NAME>` convention) |
+| `--http <url>` | MCP Streamable HTTP endpoint |
+| `--sse <url>` | MCP SSE endpoint |
+| `--stdio "<cmd>"` | MCP stdio command, e.g. `"npx -y resend-mcp"` |
+| `--auth` | Auth scheme: `none` (default), `bearer`, `api_key`, `oauth` |
+| `--location` | For `api_key`: `header` (default), `query`, or `env` |
+| `--header` | Header name when `--location header`, e.g. `X-Api-Key` |
+| `--param` | Query param name when `--location query`, e.g. `tavilyApiKey` |
+| `--env-var` | Env var holding the secret (default: inferred `AXON_SECRET_<NAME>`) |
+| `--scope` | OAuth scope (repeatable) |
+| `--tag` | Capability tag the PA matches against (repeatable) |
+| `--paid` / `--free` | Whether the resource charges per call (default: `--free`) |
+| `--cost-per-call` | Estimated USD cost per call |
+| `--token` | Optional Axon admission token (`axon_tk_…`), verified and consumed at registration |
+| `--description` | Description used for matching (synthesized from the tools if omitted) |
+
+`--paid` and `--cost-per-call` are stored on the resource's policy and later
+enforced by the Resolver against the operator's policy — see
+[Resource resolution → Step 3](resolver.md#step-3--the-operator-policy-filter).
+
+```bash
+# Tavily — API key in the query string
+axon add mcp tavily --http https://mcp.tavily.com/mcp/ \
+  --auth api_key --location query --param tavilyApiKey \
+  --tag web_search
+
+# a paid resource, priced per call
+axon add mcp some-llm --http https://api.example.com/mcp/ \
+  --auth bearer --paid --cost-per-call 0.002 --tag summarize
+```
+
 ---
 
 ## axon pa
@@ -129,6 +177,8 @@ extraction), and coordinates the work needed to answer it.
 - [`axon pa config`](#axon-pa-config) — view and change PA settings
 - [`axon pa skills`](#axon-pa-skills) — tune how the PA understands requests
 - [`axon pa tools`](#axon-pa-tools) — manage the tools the PA can use directly
+- [`axon pa gateway`](#axon-pa-gateway) — connect Gateway Agents and inspect their resources
+- [`axon pa policy`](#axon-pa-policy) — control which resources the PA may use
 
 ### axon pa run
 
@@ -275,6 +325,10 @@ The domain must already exist as a skill file. Create one with
 | `--gateway-add` | Add a Gateway URL |
 | `--gateway-remove` | Remove a Gateway URL |
 
+> Prefer [`axon pa gateway add`](#axon-pa-gateway) to connect a gateway: it
+> fetches the gateway card, registers the connection, and shows the resources
+> and their eligibility. These config flags are the low-level equivalent.
+
 > **Restart note:** changes to the model, domain, or reasoning mode only take
 > effect on the next `axon pa run` or `axon pa chat`. The command reminds you
 > when a restart is needed.
@@ -402,6 +456,98 @@ axon pa tools add \
 # temporarily turn off web access
 axon pa tools disable web_search
 ```
+
+### axon pa gateway
+
+Manages the **Gateway Agents** this PA is connected to, and lets you inspect the
+resources they expose. A connected gateway is recorded in `axon.config.json`
+under `pa.gateways`.
+
+```bash
+axon pa gateway add <url>
+axon pa gateway list
+axon pa gateway remove <url>
+axon pa gateway ping [<url>]
+axon pa gateway resources [--filter <f>] [--context <ga>]
+```
+
+| Subcommand | Description |
+|---|---|
+| `add <url>` | Connect to a gateway (see the three steps below) |
+| `list` | List connected gateways with live online/offline status |
+| `remove <url>` | Disconnect a gateway |
+| `ping [<url>]` | Check reachability and refresh `last_seen` (all gateways if `<url>` omitted) |
+| `resources` | List resources across connected gateways with policy eligibility |
+
+**`add` runs three steps:**
+
+1. `GET /ga/card` — fetch the gateway card and check its `trust_level` (you are
+   warned before connecting to an `unknown` gateway).
+2. `POST /pa/connect` — announce this PA to the gateway, which records the
+   connection.
+3. `GET /ga/resources` — list the gateway's resources and print an eligibility
+   table evaluated against your current [policy](#axon-pa-policy).
+
+**`resources` filters:**
+
+| Flag | Value | Shows |
+|---|---|---|
+| `--filter` | `eligible` | only resources ready to use right now |
+| `--filter` | `auth-missing` | only resources needing a token — and which `AXON_SECRET_*` to set |
+| `--filter` | `paid` | only paid resources — to decide whether to allow them |
+| `--context` | `<name\|url>` | restrict to a single gateway |
+
+The `status` column (`✓ pronto` / `✗ <reason>`) is produced by the **same
+evaluation the Resolver uses** to pick resources — what shows as ready is what
+the PA would actually use. See [Resource resolution](resolver.md).
+
+```bash
+# connect and immediately see what's available
+axon pa gateway add http://ga-corp.example.com/
+
+# what still needs a token?
+axon pa gateway resources --filter auth-missing
+
+# only one gateway, only the ready resources
+axon pa gateway resources --context ga-corp --filter eligible
+```
+
+### axon pa policy
+
+Shows or edits the **resource policy** — the operator's rules for which
+resources the PA is allowed to use. The Resolver applies this policy to every
+resource a gateway returns, discarding the ones that fail. Stored in
+`axon.config.json` under `pa.resource_policy`.
+
+```bash
+# show the current policy
+axon pa policy
+
+# edit one or more fields
+axon pa policy set --allow-paid true --match-threshold 0.75
+```
+
+| Flag | Description |
+|---|---|
+| `--allow-paid` | `true` / `false` — may the PA use paid resources? |
+| `--max-cost-per-call` | Maximum USD per call (`0` = no limit) |
+| `--require-auth-setup` | `true` / `false` — discard resources whose token is not configured |
+| `--match-threshold` | Minimum GA match score (`0.0`–`1.0`) to accept a resource |
+| `--fallback-strategy` | What to do when nothing is eligible: `skip`, `fail`, or `ask_user` |
+
+Each field is documented in [Configuration](configuration.md); how the Resolver
+applies them is in [Resource resolution → Step 3](resolver.md#step-3--the-operator-policy-filter).
+
+```bash
+# a strict policy: no paid resources, tokens required, cheap calls only
+axon pa policy set --allow-paid false --require-auth-setup true --max-cost-per-call 0.01
+
+# later, allow paid resources after reviewing them
+axon pa policy set --allow-paid true
+```
+
+> **Restart note:** policy changes take effect on the next `axon pa run` or
+> `axon pa chat`.
 
 ---
 

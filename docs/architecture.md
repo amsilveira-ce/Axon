@@ -45,6 +45,12 @@ Executor               Plan + resource_pool → result
 response
 ```
 
+## Resource resolution
+
+The **Resolver** binds each subtask in the plan to a concrete resource. It checks the local pool first (local tools and resources cached from previous runs), then asks connected Gateway Agents — ranking which GA to query with a UCB1 bandit that learns the best gateway per capability — and finally filters every candidate against the operator's resource policy (paid, cost, required auth). The chosen resource, plus fallbacks, is recorded per subtask for the Executor.
+
+The operator inspects and tunes this with `axon pa gateway resources` and `axon pa policy`. See [Resource resolution](resolver.md).
+
 ## Context layer
 
 A language model holds no state between calls, so the PA re-supplies what it
