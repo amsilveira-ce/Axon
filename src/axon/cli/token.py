@@ -27,8 +27,10 @@ def token_generate(
     Add the generated token to the resource metadata so the Gateway can
     verify it during registration.
     """
+    from axon.ga.config import GAConfig
+    ga = GAConfig.resolve()
     try:
-        token = generate(name)
+        token = generate(name, ga.paths)
     except Exception as e:
         fatal(f"Could not generate token: {e}")
  
@@ -60,7 +62,7 @@ def token_generate(
     console.print(f'  [dim]  "protocol_version": "0.1"[/dim]')
     console.print(f'  [dim]}}[/dim]')
     console.print()
-    console.print(info("[dim]saved to .axon/tokens.json[/dim]"))
+    console.print(info(f"[dim]context {ga.context} · saved to {ga.paths.tokens}[/dim]"))
     console.print()
 
 @app.command("list")
@@ -68,7 +70,8 @@ def token_list(
     show_all: bool = typer.Option(False, "--all", help="Include used and revoked tokens"),
 ) -> None:
     """List registration tokens in the local store."""
-    tokens = list_tokens()
+    from axon.ga.config import GAConfig
+    tokens = list_tokens(GAConfig.resolve().paths)
  
     if not show_all:
         tokens = [t for t in tokens if t.status.value == "pending"]
@@ -117,8 +120,9 @@ def token_revoke(
     Resources already registered with this token are not immediately affected
     — their status updates on the next 'axon ga resource ping'.
     """
+    from axon.ga.config import GAConfig
     try:
-        entry = revoke(token_value)
+        entry = revoke(token_value, GAConfig.resolve().paths)
     except TokenVerificationError as e:
         fatal(str(e))
  

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from axon.types import AgentCard
 import httpx
 from pydantic import ValidationError
@@ -47,6 +47,52 @@ class ValidationResult:
     # Valor do token verificado — usado por add_agent para chamar mark_used()
     # após persistir o resource. Nunca armazenado no registry diretamente.
     verified_token: str | None = None
+
+
+@dataclass
+class McpValidationResult:
+    """Resultado da validação de um recurso MCP (conexão viva + tools)."""
+    ok:          bool
+    tools:       list[str]   = field(default_factory=list)
+    fingerprint: str | None  = None
+    error:       str | None  = None
+    step:        str | None  = None
+
+
+def validate_mcp(manifest: "ResourceManifest") -> McpValidationResult:  # type: ignore[name-defined]
+    """
+    Valida um recurso MCP antes do registro no Gateway.
+
+    Prova de validade = conexão viva: usa o MCPClient para conectar de verdade
+    (HTTP/SSE/stdio, com a auth do manifest) e listar as tools. As tools provam
+    que o recurso existe, está no ar e o que ele faz. O fingerprint é calculado
+    sobre (binding + endpoint/command + tools ordenadas).
+
+    Diferente do A2A, o recurso MCP não carrega axon_token — a autorização é
+    apresentada pelo operador no momento do registro (token de admissão).
+    """
+    import asyncio
+
+    from axon.ga.clients.mcp_client import MCPClient, MCPClientError
+
+    async def _probe() -> list[str]:
+        async with MCPClient(manifest, timeout=20.0) as client:
+            return await client.list_tools()
+
+    try:
+        tools = asyncio.run(_probe())
+    except MCPClientError as e:
+        return McpValidationResult(ok=False, step="connect", error=str(e))
+    except Exception as e:
+        return McpValidationResult(ok=False, step="connect", error=str(e))
+
+    fp = fingerprint({
+        "binding":  manifest.protocol_binding.value,
+        "endpoint": manifest.endpoint,
+        "command":  manifest.command,
+        "tools":    sorted(tools),
+    })
+    return McpValidationResult(ok=True, tools=tools, fingerprint=fp)
 
 
 def _verify_token(axon_meta: AxonMetadata) -> TokenVerificationError | None:

@@ -1,5 +1,8 @@
 """
-pa/token_resolver.py — TokenResolver
+token_resolver.py — TokenResolver
+
+Módulo neutro (axon.*): usado tanto pelo PA (autenticar-se ao recurso na
+execução) quanto pelo GA (conectar-se ao recurso na validação/registro).
 
 Responsabilidade:
   Resolver o token de autenticação do PA perante um recurso externo.

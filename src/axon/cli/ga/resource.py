@@ -64,9 +64,13 @@ def resource_list() -> None:
         console.print(info(f"[dim]type        {r.type.value}[/dim]"))
         console.print(info(f"[dim]endpoint    {r.endpoint}[/dim]"))
         if r.skills:
-            tags = ", ".join(t for s in r.skills for t in s.tags)
-            if tags:
-                console.print(info(f"[dim]tags        {tags}[/dim]"))
+            seen: list[str] = []
+            for s in r.skills:
+                for t in s.tags:
+                    if t not in seen:
+                        seen.append(t)
+            if seen:
+                console.print(info(f"[dim]tags        {', '.join(seen)}[/dim]"))
         console.print(divider())
 
     console.print()

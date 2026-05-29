@@ -161,6 +161,146 @@ def add_agent(
     console.print()
 
 
+# ── mcp ─────────────────────────────────────────────────────────────────────
+
+@app.command("mcp")
+def add_mcp(
+    name:        str        = typer.Argument(..., help="Resource name (e.g. tavily)"),
+    http:        str | None = typer.Option(None, "--http",  help="MCP Streamable HTTP endpoint URL"),
+    sse:         str | None = typer.Option(None, "--sse",   help="MCP SSE endpoint URL"),
+    stdio:       str | None = typer.Option(None, "--stdio", help='MCP stdio command, ex: "npx -y resend-mcp"'),
+    auth:        str        = typer.Option("none", "--auth",     help="Auth scheme: none|bearer|api_key|oauth"),
+    location:    str        = typer.Option("header", "--location", help="api_key location: header|query|env"),
+    header:      str | None = typer.Option(None, "--header",  help="Header name (location=header)"),
+    param:       str | None = typer.Option(None, "--param",   help="Query param name (location=query)"),
+    env_var:     str | None = typer.Option(None, "--env-var", help="Env var que guarda o segredo"),
+    scope:       list[str]  = typer.Option(None, "--scope",   help="OAuth scope (repetível)"),
+    tag:         list[str]  = typer.Option(None, "--tag",     help="Capability tag (repetível)"),
+    token:       str | None = typer.Option(None, "--token",   help="Token de admissão Axon (axon_tk_...) — opcional"),
+    description: str        = typer.Option("", "--description", help="Descrição do recurso"),
+) -> None:
+    """
+    Register an MCP resource with the active Gateway.
+
+    Validação = conexão viva: conecta de verdade via MCPClient e lista as tools
+    (prova que o recurso existe, está no ar e o que faz). Diferente do A2A, o
+    recurso não carrega axon_token — a autorização é apresentada pelo operador
+    aqui (--token, opcional): verificado e consumido no registro.
+
+    Transporte (exatamente um): --http | --sse | --stdio.
+    """
+    import shlex
+    from axon.ga.config import GAConfig
+    from axon.ga.registry import add_resource
+    from axon.ga.tokens import verify_local, mark_used, TokenVerificationError
+    from axon.types import (
+        AuthConfig, AuthScheme, AuthLocation, A2ASkill,
+        ProtocolBinding, Resource, ResourceManifest, ResourceStatus, ResourceType,
+    )
+    from axon.validator import validate_mcp
+
+    # 1. transporte — exatamente um
+    chosen = [(k, v) for k, v in (("http", http), ("sse", sse), ("stdio", stdio)) if v]
+    if len(chosen) != 1:
+        fatal('escolha exatamente um transporte: --http URL | --sse URL | --stdio "cmd"')
+    kind, value = chosen[0]
+    if kind == "http":
+        binding, endpoint, command = ProtocolBinding.MCP_HTTP, value, None
+    elif kind == "sse":
+        binding, endpoint, command = ProtocolBinding.MCP_SSE, value, None
+    else:
+        binding, endpoint, command = ProtocolBinding.MCP_STDIO, None, shlex.split(value)
+
+    # 2. auth
+    try:
+        scheme = AuthScheme(auth)
+        loc    = AuthLocation(location)
+    except ValueError as e:
+        fatal(f"valor inválido para --auth/--location: {e}")
+    auth_cfg = AuthConfig(
+        scheme=scheme, location=loc,
+        header=header, param=param, env_var=env_var,
+        scopes=scope or [],
+    )
+
+    # 3. manifest de validação
+    manifest = ResourceManifest(
+        resource_id=f"res-{secrets.token_hex(3)}",
+        name=name, type=ResourceType.mcp, protocol_binding=binding,
+        description=description, capability_tags=tag or [],
+        callable_by="pa_direct", endpoint=endpoint, command=command,
+        auth=auth_cfg,
+    )
+
+    ga = GAConfig.resolve()
+    console.print()
+    console.print(info(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
+    console.print(f"\n  {step(f'Connecting to [cyan]{name}[/cyan] ([dim]{binding.value}[/dim])')}")
+    console.print(divider())
+
+    # 4. validação = conexão viva + tools
+    result = validate_mcp(manifest)
+    if not result.ok:
+        console.print("  [red]■[/red] connect failed\n")
+        for line in (result.error or "").split("\n"):
+            console.print(f"  [dim]{line}[/dim]")
+        console.print()
+        raise typer.Exit(1)
+
+    console.print(f"  {step(f'connected        [green]{len(result.tools)} tools[/green]')}")
+    console.print(divider())
+    console.print(f"  {step(f'fingerprint      [dim]{result.fingerprint}[/dim]')}")
+    console.print(divider())
+
+    # 5. token de admissão (opcional)
+    if token:
+        try:
+            verify_local(token, ga.paths)
+        except TokenVerificationError as e:
+            console.print("  [red]■[/red] admission token rejected\n")
+            console.print(f"  [dim]{e}[/dim]\n")
+            raise typer.Exit(1)
+        console.print(f"  {step('admission token  [green]verified[/green]')}")
+        console.print(divider())
+
+    # 6. persiste
+    skills   = [A2ASkill(id=t, description=t, tags=tag or []) for t in result.tools]
+    resource = Resource(
+        id=manifest.resource_id, type=ResourceType.mcp, protocol_binding=binding,
+        name=name, endpoint=endpoint, command=command, description=description,
+        skills=skills, fingerprint=result.fingerprint or "",
+        auth=auth_cfg, token_ref=token, status=ResourceStatus.online,
+    )
+    try:
+        add_resource(resource, ga.paths)
+    except Exception as e:
+        fatal(f"Could not write to registry: {e}")
+
+    if token:
+        try:
+            mark_used(token, resource.id, ga.paths)
+        except Exception:
+            console.print(warn("could not update token status"))
+
+    auth_display = scheme.value + (f"/{loc.value}" if scheme == AuthScheme.api_key else "")
+    tools_preview = ", ".join(result.tools[:8]) + (" …" if len(result.tools) > 8 else "")
+
+    console.print()
+    console.print(f"  {ok(f'[bold]{name}[/bold] registered')}\n")
+    console.print(info(f"id          [dim]{resource.id}[/dim]"))
+    console.print(info(f"type        [dim]mcp ({binding.value})[/dim]"))
+    console.print(info(f"auth        [dim]{auth_display}[/dim]"))
+    console.print(info(f"tools       [dim]{tools_preview or '—'}[/dim]"))
+    if endpoint:
+        console.print(info(f"endpoint    [dim]{endpoint}[/dim]"))
+    if command:
+        console.print(info(f"command     [dim]{' '.join(command)}[/dim]"))
+    console.print(info(f"token_ref   [dim]{token or '—'}[/dim]"))
+    console.print(info(f"context     [dim]{ga.context}[/dim]"))
+    console.print(info(f"saved to    [dim]{ga.paths.registry}[/dim]"))
+    console.print()
+
+
 # ── remove ────────────────────────────────────────────────────────────────────
 
 remove_app = typer.Typer(help="Unregister a resource from the Gateway.")

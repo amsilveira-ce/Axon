@@ -224,10 +224,14 @@ class Resource(BaseModel):
     type:             ResourceType
     protocol_binding: ProtocolBinding
     name:             str
-    endpoint:         str
+    endpoint:         str | None    = None   # A2A e MCP HTTP/SSE; None para stdio
+    command:          list[str] | None = None   # MCP stdio
     description:      str
     skills:           list[A2ASkill] | None = Field(default_factory=list)
     fingerprint:      str
+    # auth do PA perante o recurso na execução — preenchido no add mcp,
+    # consumido pelo Resolver/Executor para reconstruir o ResourceManifest.
+    auth:             "AuthConfig"  = Field(default_factory=lambda: AuthConfig())
     token_ref:        str | None    = None
     registered_at:    datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
     status:           ResourceStatus = ResourceStatus.online
