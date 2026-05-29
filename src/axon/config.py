@@ -29,6 +29,7 @@ DEFAULT_LOCAL_TOOLS: dict = {
             "description": "Evaluates mathematical expressions safely",
             "transport":   "stdio",
             "command":     ["python", "-m", "axon.pa.tools.server"],
+            "tool":        "calculate",
             "enabled":     True,
         },
         {
@@ -37,6 +38,7 @@ DEFAULT_LOCAL_TOOLS: dict = {
             "description": "Searches the web via DuckDuckGo",
             "transport":   "stdio",
             "command":     ["python", "-m", "axon.pa.tools.server"],
+            "tool":        "web_search",
             "enabled":     True,
         },
         {
@@ -45,6 +47,7 @@ DEFAULT_LOCAL_TOOLS: dict = {
             "description": "Reads local files — PDF, TXT, CSV, MD",
             "transport":   "stdio",
             "command":     ["python", "-m", "axon.pa.tools.server"],
+            "tool":        "read_file_tool",
             "enabled":     True,
         },
         {
@@ -53,6 +56,7 @@ DEFAULT_LOCAL_TOOLS: dict = {
             "description": "Returns current date/time and resolves date expressions",
             "transport":   "stdio",
             "command":     ["python", "-m", "axon.pa.tools.server"],
+            "tool":        "get_datetime",
             "enabled":     True,
         },
     ],

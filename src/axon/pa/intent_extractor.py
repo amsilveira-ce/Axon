@@ -72,7 +72,7 @@ BLOCK 2 — Structured output
   "success_definition": "<verifiable condition that means the task is complete>",
   "capability_hints": ["<capability_tag>"],
   "extracted_inputs": {"<slot>": "<value explicitly stated in query>"},
-  "assumptions": ["<default from memory or context — never invented>"],
+  "assumptions": ["<sensible default you applied to proceed — never a fabricated fact>"],
   "clarification": null
 }
 </output>
@@ -94,7 +94,9 @@ Output rules (enforced by parser — do not change):
 - goal: full phrase. WRONG: "create". RIGHT: "create 5-slide pitch deck about Q3 for investors".
 - constraints: only restrictions on HOW to execute. Do NOT copy extracted_inputs here.
 - extracted_inputs: only information explicitly stated in the query.
-- assumptions: only defaults from Memory or context. Never invent.
+- assumptions: defaults you applied to proceed (from Memory, context, or sensible
+  conventions about HOW to do the task). State them honestly. Never fabricate
+  factual data — names, numbers, contents, recipients.
 - clarification null = proceed. clarification filled = needs user input.
 - Do not ask about information that Available Resources can retrieve autonomously.
 """.strip()

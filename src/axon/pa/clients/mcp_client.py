@@ -102,6 +102,12 @@ class MCPClient:
         tools = await self._client.list_tools()  # type: ignore[union-attr]
         return [t.name for t in tools]
 
+    async def list_tool_schemas(self) -> dict[str, dict]:
+        """Retorna {nome_da_tool: inputSchema} — usado pelo Parameterizer."""
+        self._assert_connected()
+        tools = await self._client.list_tools()  # type: ignore[union-attr]
+        return {t.name: (getattr(t, "inputSchema", None) or {}) for t in tools}
+
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """
         Chama uma tool MCP e retorna o resultado deserializado.

@@ -156,6 +156,10 @@ class ConversationHistory(BaseModel):
     def last_user_message(self) -> str | None:
         return next((m.content for m in reversed(self.messages) if m.role == "user"), None)
 
+    def last_turn(self) -> str | None:
+        """A última mensagem do usuário — o turno atual em curso."""
+        return self.last_user_message()
+
 
     def persist(self, sessions_dir: Path) -> None:
 

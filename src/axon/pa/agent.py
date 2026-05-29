@@ -13,8 +13,11 @@ from axon.pa.planner import Planner, PlanError
 from axon.pa.intent_extractor import ExtractionTrace, IntentExtractor
 from axon.pa.local_pool import LocalResourcePool
 from axon.pa.models import AgentState, ClarificationNeeded, Objective, Plan
-from axon.pa.resolver import Resolver, ResolverError
+from axon.pa.resolver import Resolver, ResolverClarification, ResolverError
 from axon.pa.resource_cache import ResourceCache
+from axon.pa.executor import Executor, _short
+from axon.pa.parameterizer import Parameterizer
+from axon.pa.synthesizer import ResponseSynthesizer
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,7 @@ class PrincipalAgent:
         self._sessions_dir = sessions_dir or _default_sessions_dir()
         self._memory_path  = memory_path  or _default_memory_path()
         self._cache_path   = cache_path   or _default_cache_path()
+        self._traces_dir   = (sessions_dir.parent / "traces") if sessions_dir else _default_traces_dir()
 
         # Step 1 — LocalResourcePool (MCP stdio, pa_direct)
         local_tools_path = (
@@ -96,6 +100,18 @@ class PrincipalAgent:
             min_match_score=config.resource_policy.match_threshold,
         )
         logger.info("[PA] resolver — %d gateway(s) configured", len(config.gateways))
+
+        # Step 4 — Executor (executa o plano; fecha o reward UCB via update_final)
+        # Parameterizer re-parametriza via LLM quando os params não batem com o
+        # schema da tool (bind-if-mismatch) — compartilha o LLM client do PA.
+        self._executor = Executor(
+            affinity=self._affinity,
+            affinity_path=affinity_path,
+            parameterizer=Parameterizer(self._llm_client),
+        )
+
+        # Step 5 — ResponseSynthesizer (facts → resposta final; só lê o state)
+        self._synthesizer = ResponseSynthesizer(config)
 
         # MemoryBank
         self._memory = MemoryBank.load_or_create(self._memory_path)
@@ -161,7 +177,8 @@ class PrincipalAgent:
             return response
 
         # Step 3 — cria AgentState e pré-popula resource_pool
-        state = AgentState(raw_query=query, objective=intent)
+        # session_id atrelado à conversa → traces correlacionáveis por sessão
+        state = AgentState(raw_query=query, objective=intent, session_id=self.session_id)
         state.resource_pool = (
             self._local_pool.tools
             + self._resource_cache.all()
@@ -225,6 +242,14 @@ class PrincipalAgent:
         #           (local pool → Gateway Agent via UCB1)
         try:
             self._resolver.resolve(state)
+        except ResolverClarification as clar:
+            # fallback_strategy=ask_user — devolve pergunta ao usuário,
+            # mesmo caminho que o IntentExtractor usa para esclarecimento.
+            logger.info("[PA] resolver needs clarification: %s", clar)
+            response = self._format_clarification(clar.clarification)
+            self._history.add_message("assistant", response, llm_client=self._llm_client)
+            self._persist_session()
+            return response
         except ResolverError as exc:
             logger.error("[PA] resolver raised: %s", exc)
             response = (
@@ -235,11 +260,30 @@ class PrincipalAgent:
             self._persist_session()
             return response
 
-        # Executor (pendente)
-        # self._executor.execute(state)
-        # response = state.summary
+        # Step 7 — Executor: executa cada subtask resolvida (Fact/Failure + reward)
+        try:
+            self._executor.execute(state)
+        except Exception as exc:
+            logger.error("[PA] executor raised: %s", exc, exc_info=True)
+            self._persist_trace(state)   # salva o que houver, mesmo parcial
+            response = (
+                f"An error interrupted execution of your request.\n\n{exc}"
+            )
+            self._history.add_message("assistant", response, llm_client=self._llm_client)
+            self._persist_session()
+            return response
 
-        response = self._format_plan(intent, state)
+        self._persist_trace(state)
+
+        # Step 8 — ResponseSynthesizer: facts + contexto → resposta em linguagem
+        # natural. Fallback para o resumo estruturado se a síntese falhar.
+        try:
+            response = self._synthesizer.synthesize(state, self._history)
+            if not response:
+                response = self._format_result(intent, state)
+        except Exception as exc:
+            logger.warning("[PA] synthesizer failed (%s) — using structured result", exc)
+            response = self._format_result(intent, state)
 
         self._history.add_message("assistant", response, llm_client=self._llm_client)
         self._persist_session()
@@ -293,8 +337,8 @@ class PrincipalAgent:
             lines.append(f"constraints: {', '.join(c.value for c in intent.constraints)}")
         return "\n".join(lines)
 
-    def _format_plan(self, intent: Objective, state: AgentState) -> str:
-        """Formata Objective + Plan + recursos atribuídos — usado pelo run()."""
+    def _format_result(self, intent: Objective, state: AgentState) -> str:
+        """Formata o resultado da run executada — usado pelo run()."""
         plan = state.plan
         lines = [
             f"goal: {intent.goal}",
@@ -303,21 +347,44 @@ class PrincipalAgent:
             f"plan ({len(plan.subtasks)} subtask(s)):",
         ]
         for s in plan.subtasks:
-            lines.append(f"  [{s.id}] {s.description}")
+            status = state.progress.get(s.id)
+            status_label = status.value if status else "pending"
+            lines.append(f"  [{s.id}] {s.description}  [{status_label}]")
             lines.append(f"    capability : {s.capability_required}")
-            if s.output_artifact:
-                lines.append(f"    output     : {s.output_artifact}")
-            if s.depends_on:
-                lines.append(f"    depends_on : {', '.join(s.depends_on)}")
 
             assignment = state.resource_assignments.get(s.id)
             if assignment is not None:
                 via = f"GA {assignment.ga_url}" if assignment.ga_url else "local pool"
                 lines.append(f"    resource   : {assignment.manifest.name} (via {via})")
+
+            fact = state.get_fact(s.id)
+            if fact is not None:
+                lines.append(f"    output     : {_short(fact.output)}")
             else:
-                lines.append("    resource   : — unresolved")
-        lines.extend(["", "[executor not implemented — next step]"])
+                fails = [f for f in state.failures if f.subtask_id == s.id]
+                if fails:
+                    lines.append(f"    error      : {fails[-1].reason}")
+
+        b = state.budget
+        lines.extend([
+            "",
+            f"budget: tokens {b.tokens_used}/{b.tokens_max} · "
+            f"calls {b.calls_used}/{b.calls_max} · elapsed {b.elapsed_ms / 1000:.1f}s",
+            "",
+            f"inspect: axon pa inspect --session {state.session_id}",
+        ])
         return "\n".join(lines)
+
+    def _persist_trace(self, state: AgentState) -> None:
+        """Salva o AgentState em {traces}/{session_id}/{request_id}.json."""
+        try:
+            trace_dir = self._traces_dir / state.session_id
+            trace_dir.mkdir(parents=True, exist_ok=True)
+            path = trace_dir / f"{state.request_id}.json"
+            path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+            logger.info("[PA] trace saved → %s", path)
+        except Exception as e:
+            logger.warning("[PA] failed to persist trace: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -380,3 +447,11 @@ def _default_affinity_path() -> Path:
         return paths().pa_ga_affinity
     except Exception:
         return Path(".axon/pa/ga_affinity.json")
+
+
+def _default_traces_dir() -> Path:
+    try:
+        from axon.config import paths
+        return paths().pa_traces
+    except Exception:
+        return Path(".axon/pa/traces")

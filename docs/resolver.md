@@ -176,6 +176,29 @@ an excellent match still earns its retrieval reward even if policy blocks the
 resource or its token is missing — those are the operator's/environment's
 concern, not a failure of the gateway's retrieval.
 
+## When nothing resolves — the fallback strategy
+
+If every gateway was queried and none returned an *eligible* resource for a
+capability, the subtask is left unresolved. What happens next depends on the
+subtask and the operator's policy:
+
+- **Optional subtasks** (`is_optional = true`) are **always** marked `SKIPPED` —
+  the plan was designed to survive without them, regardless of policy.
+- **Required subtasks** follow `pa.resource_policy.fallback_strategy`:
+
+| `fallback_strategy` | what the Resolver does |
+|---------------------|------------------------|
+| `skip` | mark the subtask `SKIPPED`; the plan continues without it and the Executor ignores it |
+| `fail` | record a `Failure` in the `AgentState`, set the subtask `FAILED`, and raise — the run stops |
+| `ask_user` | return a `ClarificationNeeded` to the user (e.g. *"I couldn't find a resource for `health_search`. Do you have access to a system that provides this?"*) |
+
+`ask_user` reuses the same clarification channel the IntentExtractor uses, so an
+unresolvable capability surfaces as a question rather than a hard error. The
+default is `ask_user`; a Resolver built without a policy falls back to `fail`
+(the historical hard-error behaviour). At most three questions are raised at once
+(the `ClarificationNeeded` contract); any extra unresolved steps are noted in the
+clarification context.
+
 ## The operator workflow
 
 The policy filter is only useful if the operator can see what is available and
@@ -251,10 +274,19 @@ declarations (`is_paid`, `cost_per_call`) are captured at registration via
 `/ga/resources/search` → manifest, so the policy filter and the eligibility table
 reflect real pricing; auth is resolved live in Step 4.
 
-The **Executor** is not built yet. Its hook is the final piece of the reward
-loop: after running each subtask it calls `update_final(ga_url, capability,
-execution_success)` on the affinity store, closing the two-phase reward for GA-
-discovered resources (those with a non-empty `ga_url`). Until then, gateway
-scores reflect retrieval quality (match + speed) but not execution success.
+The **Executor** is now built and wired into `PrincipalAgent.run()`. It walks the
+resolved plan and, per subtask, gates on budget/dependencies/cache, resolves
+ReWOO params (`{{artifact:name}}`), calls the resource by `callable_by`
+(`ga_proxy` → the GA's `/invoke`; `pa_direct` → the A2A/MCP clients, with
+fallback to `alternatives` on failure), and records a `Fact` or `Failure`. It
+closes the two-phase reward by calling `update_final(ga_url, capability,
+execution_success)` for GA-discovered resources (non-empty `ga_url`) — so gateway
+scores now reflect execution success, not just retrieval quality. The affinity
+store is shared in-memory with the Resolver, so `update_partial` (resolution) and
+`update_final` (execution) accumulate on the same entry.
+
+Each run is persisted to `{data_dir}/pa/traces/{session_id}/{request_id}.json`
+and can be replayed with `axon pa inspect --session <id>` (objective, plan with
+per-subtask status, facts, failures, budget).
 
 See also: [Architecture](architecture.md) · [Third-party MCP resources](mcp-resources.md) · [Local tools](local-tools.md) · [Configuration](configuration.md).

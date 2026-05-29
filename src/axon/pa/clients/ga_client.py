@@ -42,6 +42,7 @@ class GAClient:
     """
 
     SEARCH_PATH = "/ga/resources/search"
+    INVOKE_PATH = "/ga/resources/{resource_id}/invoke"
 
     def __init__(self, ga_url: str, timeout: float = 8.0) -> None:
         self._base    = ga_url.rstrip("/")
@@ -99,6 +100,42 @@ class GAClient:
             match_score=float(results[0].get("score", 0.0)),
             latency_ms=latency_ms,
         )
+
+    def invoke(
+        self,
+        *,
+        resource_id: str,
+        params:      dict,
+        tool:        str | None = None,
+        task:        str | None = None,
+        pa_id:       str | None = None,
+        timeout:     float       = 120.0,
+    ) -> dict:
+        """
+        Pede ao GA para executar uma tool MCP em nome do PA (caminho ga_proxy).
+
+        tool=None deixa o GA inferir a tool quando o servidor expõe só uma.
+        pa_id, se informado, vai no header X-Axon-PA-ID (observabilidade no GA).
+        timeout maior que o de search: a execução (spawn + tool) é mais lenta.
+
+        Returns:
+            o corpo JSON do GA: {resource_id, name, type, tool, status, result}.
+
+        Raises:
+            GAClientError: falha de transporte/HTTP (inclui 4xx/5xx do GA).
+        """
+        path     = self.INVOKE_PATH.format(resource_id=resource_id)
+        endpoint = f"{self._base}{path}"
+        payload  = {"tool": tool, "params": params, "task": task}
+        headers  = {"X-Axon-PA-ID": pa_id} if pa_id else None
+
+        try:
+            resp = httpx.post(endpoint, json=payload, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise GAClientError(f"GA invoke failed at {endpoint}: {e}") from e
+
+        return resp.json()
 
     # ------------------------------------------------------------------
 

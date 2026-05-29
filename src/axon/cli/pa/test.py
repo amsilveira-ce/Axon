@@ -6,10 +6,13 @@ Roda o pipeline do PA e mostra o roadmap completo, etapa por etapa:
   1. IntentExtraction  query → Objective
   2. Decomposer        Objective → subtasks → Plan + DAG
   3. Resolver          Plan → recurso por subtask (local pool / Gateway Agent)
+  4. Executor          executa cada subtask → Fact/Failure, scratchpad, budget
 
-A etapa do Resolver mostra TODAS as suas decisões: pool local (cache hit),
-ranking UCB dos gateways, broadcast, filtro de política e a atribuição final.
-Útil para entender o que o PA faz antes do Executor existir.
+O Resolver mostra TODAS as suas decisões: pool local (cache hit), ranking UCB
+dos gateways, broadcast, filtro de política e a atribuição final. O Executor
+mostra a execução real (chamadas a recursos), o scratchpad e o consumo de budget,
+e persiste o trace (replay com `axon pa inspect`). Use --dry-run para parar antes
+do Executor (só planejamento, sem chamadas externas).
 """
 
 from __future__ import annotations
@@ -56,16 +59,17 @@ def _capture(*logger_names: str):
 def intent_test(
     query:   str  = typer.Option(..., "--query", "-q", help="Query to test"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show context injected into the LLM"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Stop after the Resolver — don't execute (no external calls)"),
 ) -> None:
     """
-    Run the full PA pipeline (Intent → Decomposer → Resolver) and print each stage.
+    Run the full PA pipeline (Intent → Decomposer → Resolver → Executor) and print each stage.
     """
     from axon.config import read_config, paths
     from axon.pa.agent import PrincipalAgent
     from axon.pa.decomposer import Decomposer
     from axon.pa.models import AgentState
     from axon.pa.planner import Planner, PlanError
-    from axon.pa.resolver import ResolverError
+    from axon.pa.resolver import ResolverClarification, ResolverError
 
     try:
         config = read_config()
@@ -166,10 +170,13 @@ def intent_test(
     console.print(info(f"gateways    [dim]{', '.join(gw) if gw else 'none connected'}[/dim]"))
     console.print()
 
+    resolver_error = None
+    resolver_clarification = None
     with _capture("axon.pa.resolver") as resolver_log:
         try:
             agent._resolver.resolve(state)
-            resolver_error = None
+        except ResolverClarification as clar:
+            resolver_clarification = clar
         except ResolverError as exc:
             resolver_error = exc
 
@@ -183,10 +190,66 @@ def intent_test(
     _print_assignments(state)
     _print_affinity(agent._affinity)
 
+    if resolver_clarification is not None:
+        clar = resolver_clarification.clarification
+        console.print()
+        console.print(warn("[bold]needs clarification — capability not available[/bold]"))
+        console.print(info(f"[dim]{clar.context}[/dim]"))
+        for i, q in enumerate(clar.questions, 1):
+            console.print(f"  [cyan]{i}.[/cyan] {q.question}")
+        console.print()
+        console.print(info("[dim]fallback_strategy=ask_user — no execution[/dim]"))
+        console.print()
+        return
+
     if resolver_error is not None:
         console.print()
         console.print(warn(f"[bold]ResolverError[/bold]  [dim]{resolver_error}[/dim]"))
+        console.print()
+        console.print(info("[dim]nada resolvido — sem execução[/dim]"))
+        console.print()
+        return
 
+    # ── 4. Executor ───────────────────────────────────────────────────────
+    if dry_run:
+        console.print()
+        console.print(info("[dim]--dry-run — parando antes do Executor (sem chamadas externas)[/dim]"))
+        console.print()
+        return
+
+    console.print()
+    console.print(f"  [bold cyan]4. Executor[/bold cyan]  [dim]Plan → execução real (Fact/Failure + reward)[/dim]")
+    console.print(divider())
+
+    with _capture("axon.pa.executor") as exec_log:
+        try:
+            agent._executor.execute(state)
+        except Exception as exc:
+            fatal(f"Executor error: {exc}")
+
+    if exec_log:
+        console.print(f"  {step('executor steps')}")
+        for line in exec_log:
+            console.print(info(f"[dim]{line}[/dim]"))
+        console.print()
+
+    _print_execution(state)
+
+    # ── 5. Response ───────────────────────────────────────────────────────
+    console.print()
+    console.print(f"  [bold cyan]5. Response[/bold cyan]  [dim]facts + contexto → resposta final[/dim]")
+    console.print(divider())
+    try:
+        answer = agent._synthesizer.synthesize(state, agent._history)
+    except Exception as exc:
+        answer = f"[synthesizer error: {exc}]"
+    console.print(f"  {ok('[bold]response[/bold]')}")
+    for line in (answer or "(empty)").splitlines():
+        console.print(info(line))
+
+    agent._persist_trace(state)
+    console.print()
+    console.print(info(f"[dim]trace saved — replay:[/dim] [cyan]axon pa inspect --session {state.session_id}[/cyan]"))
     console.print()
 
 
@@ -271,6 +334,51 @@ def _print_assignments(state) -> None:
 
     console.print(f"  {ok('[bold]assignments[/bold]')}")
     console.print(table)
+
+
+def _print_execution(state) -> None:
+    """Resultado da execução: status/output por subtask, scratchpad e budget."""
+    from rich.table import Table
+    from axon.pa.executor import _short
+
+    _style = {"completed": "green", "failed": "red", "skipped": "yellow", "pending": "dim"}
+
+    table = Table(show_header=True, header_style="dim", box=None, pad_edge=False, padding=(0, 3, 0, 0))
+    table.add_column("subtask")
+    table.add_column("status")
+    table.add_column("tool")
+    table.add_column("output / error")
+
+    for s in state.plan.subtasks:
+        status = state.progress.get(s.id)
+        label  = status.value if status else "pending"
+        st     = _style.get(label, "white")
+        fact   = state.get_fact(s.id)
+        if fact is not None:
+            tool, detail = fact.tool, _short(fact.output)
+        else:
+            fails  = [f for f in state.failures if f.subtask_id == s.id]
+            tool   = (fails[-1].tool or "—") if fails else "—"
+            detail = f"[red]{fails[-1].reason}[/red]" if fails else ""
+        table.add_row(s.id, f"[{st}]{label}[/{st}]", tool, detail)
+
+    console.print(f"  {ok('[bold]execution[/bold]')}")
+    console.print(table)
+
+    if state.scratchpad:
+        console.print()
+        console.print(f"  {step('scratchpad')}")
+        for e in state.scratchpad:
+            console.print(info(f"[dim]{e.step}. {e.action}[/dim]"))
+            console.print(info(f"   [dim]→ {e.observation}[/dim]"))
+
+    b = state.budget
+    console.print()
+    console.print(f"  {step('budget')}")
+    console.print(info(
+        f"[dim]tokens {b.tokens_used}/{b.tokens_max} · "
+        f"calls {b.calls_used}/{b.calls_max} · elapsed {b.elapsed_ms / 1000:.1f}s[/dim]"
+    ))
 
 
 def _print_affinity(affinity) -> None:

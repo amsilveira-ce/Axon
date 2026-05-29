@@ -9,6 +9,9 @@ pesquisa acadêmica e resolve o problema inteiro sem encadear chamadas.
 Por ser stdio, ao ser registrada num Gateway Agent ela vira um recurso
 callable_by=ga_proxy: o PA não roda este comando: ele pede ao GA para executar.
 
+Usa a lib `arxiv` (pip/uv: arxiv) — ela cuida de User-Agent, paginação,
+rate-limit (~1 req/3s) e retries, então não há HTTP/XML manual aqui.
+
 Registrar no gateway local:
   axon add mcp arxiv \\
     --stdio "python pocs/tools/mcp_server_arxiv.py" \\
@@ -21,31 +24,11 @@ Rodar direto (debug):
 
 from __future__ import annotations
 
-import time
-import urllib.parse
-import xml.etree.ElementTree as ET
-
-import httpx
+import arxiv
 from fastmcp import FastMCP
 
-ARXIV_API  = "https://export.arxiv.org/api/query"
-ATOM       = "{http://www.w3.org/2005/Atom}"
-# arXiv pede um User-Agent descritivo e ~1 req / 3s; sem isso devolve 429.
-USER_AGENT = "axon-arxiv-research/0.1 (https://axon-framework.dev)"
-
-
-def _fetch(url: str) -> str:
-    """GET com User-Agent e um retry no 429 (rate limit do arXiv)."""
-    headers = {"User-Agent": USER_AGENT}
-    for attempt in range(2):
-        resp = httpx.get(url, timeout=30.0, follow_redirects=True, headers=headers)
-        if resp.status_code == 429 and attempt == 0:
-            time.sleep(3.0)
-            continue
-        resp.raise_for_status()
-        return resp.text
-    resp.raise_for_status()
-    return resp.text
+# Cliente compartilhado: a lib aplica delay entre páginas e retries por conta própria.
+_client = arxiv.Client(page_size=10, delay_seconds=3.0, num_retries=2)
 
 mcp = FastMCP(
     name="axon-arxiv-research",
@@ -92,29 +75,29 @@ def deep_research_arxiv(topic: str, max_papers: int = 5) -> dict:
         Dict with: topic, paper_count, brief (synthesized text), and papers
         (list of {title, authors, published, url, abstract}).
     """
-    n     = max(1, min(max_papers, 10))
-    query = urllib.parse.urlencode({
-        "search_query": f"all:{topic}",
-        "start":        0,
-        "max_results":  n,
-        "sortBy":       "relevance",
-        "sortOrder":    "descending",
-    })
+    n = max(1, min(max_papers, 10))
+    search = arxiv.Search(
+        query=f"all:{topic}",
+        max_results=n,
+        sort_by=arxiv.SortCriterion.Relevance,
+        sort_order=arxiv.SortOrder.Descending,
+    )
 
     try:
-        root = ET.fromstring(_fetch(f"{ARXIV_API}?{query}"))
-    except (httpx.HTTPError, ET.ParseError) as exc:
+        results = list(_client.results(search))
+    except arxiv.ArxivError as exc:
         return {"topic": topic, "paper_count": 0, "brief": f"arXiv error: {exc}", "papers": []}
 
-    papers: list[dict] = []
-    for entry in root.findall(f"{ATOM}entry"):
-        papers.append({
-            "title":     " ".join((entry.findtext(f"{ATOM}title") or "").split()),
-            "authors":   [a.findtext(f"{ATOM}name") or "" for a in entry.findall(f"{ATOM}author")],
-            "published": (entry.findtext(f"{ATOM}published") or "")[:10],
-            "url":       (entry.findtext(f"{ATOM}id") or "").strip(),
-            "abstract":  " ".join((entry.findtext(f"{ATOM}summary") or "").split()),
-        })
+    papers = [
+        {
+            "title":     " ".join(r.title.split()),
+            "authors":   [a.name for a in r.authors],
+            "published": r.published.date().isoformat() if r.published else "",
+            "url":       r.entry_id,
+            "abstract":  " ".join(r.summary.split()),
+        }
+        for r in results
+    ]
 
     return {
         "topic":       topic,

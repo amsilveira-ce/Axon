@@ -62,6 +62,7 @@ class LocalResourcePool:
                     callable_by="pa_direct",
                     command=t.get("command"),
                     endpoint=t.get("endpoint"),
+                    tool=t.get("tool"),
                 ))
             except Exception as e:
                 import logging

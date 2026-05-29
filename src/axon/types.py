@@ -375,6 +375,9 @@ class ResourceManifest(BaseModel):
     command:          list[str] | None       = None   # MCP stdio
     ga_url:           str | None             = None   # ga_proxy
     a2a_capabilities: A2ACapabilities | None = None
+    # tool MCP específica a chamar num servidor multi-tool; None = inferir
+    # (pelo nome do recurso / capability / única). Ex.: calculator → "calculate".
+    tool:             str | None             = None
 
     # política declarada pelo recurso
     policy: ResourcePolicy = Field(default_factory=ResourcePolicy)

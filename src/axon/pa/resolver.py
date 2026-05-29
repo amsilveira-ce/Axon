@@ -28,8 +28,13 @@ Step 2 — consulta Gateway Agent
   Cada GA consultado recebe um reward parcial (match + speed) via update_partial;
   o componente de execução é fechado pelo Executor via update_final.
 
-Step 3 — filtra por ResourcePolicy (pendente)
-Step 4 — TokenResolver (pendente)
+Step 3 — filtra por ResourcePolicy (pago / custo)
+Step 4 — TokenResolver (fail-fast: descarta auth sem token)
+
+Quando nada resolve uma capability obrigatória, aplica o fallback_strategy do
+operador (ResourcePolicyConfig): skip → marca SKIPPED e segue; fail → registra
+Failure e interrompe; ask_user → devolve ClarificationNeeded ao usuário.
+Subtasks opcionais são sempre SKIPPED, independente da estratégia.
 """
 
 from __future__ import annotations
@@ -47,7 +52,7 @@ from axon.types import ResourceManifest
 
 if TYPE_CHECKING:
     from axon.config import ResourcePolicyConfig
-    from axon.pa.models import AgentState, Subtask
+    from axon.pa.models import AgentState, ClarificationNeeded, Subtask
     from axon.pa.resource_cache import ResourceCache
 
 logger = logging.getLogger(__name__)
@@ -65,7 +70,18 @@ class PendingCapability:
 
 
 class ResolverError(Exception):
-    """Raised quando uma subtask obrigatória não pode ser resolvida."""
+    """Raised quando uma subtask obrigatória não pode ser resolvida (fallback_strategy=fail)."""
+
+
+class ResolverClarification(Exception):
+    """
+    Raised quando fallback_strategy=ask_user e uma subtask obrigatória não pôde
+    ser resolvida. Carrega o ClarificationNeeded para o agent devolver ao usuário,
+    pelo mesmo caminho que o IntentExtractor usa para pedir esclarecimento.
+    """
+    def __init__(self, clarification: "ClarificationNeeded") -> None:
+        self.clarification = clarification
+        super().__init__(clarification.context)
 
 
 class Resolver:
@@ -111,11 +127,9 @@ class Resolver:
         Itera sobre as subtasks e preenche state.resource_assignments.
 
         Raises:
-            ResolverError: se subtask obrigatória não puder ser resolvida
-                           (nem local, nem via GA).
+            ResolverError: fallback_strategy=fail e subtask obrigatória não resolvida.
+            ResolverClarification: fallback_strategy=ask_user nessa mesma situação.
         """
-        from axon.pa.models import SubtaskStatus
-
         unresolved: list["Subtask"] = []
 
         # ── Step 1 — resource_pool local ────────────────────────────────────────
@@ -168,28 +182,9 @@ class Resolver:
                         ),
                     )
 
-        # ── subtasks ainda não cobertas ──────────────────────────────────────────
-        for subtask in unresolved:
-            if subtask.is_optional:
-                state.progress[subtask.id] = SubtaskStatus.SKIPPED
-                logger.info(
-                    "[Resolver] skipping optional subtask=%s (capability=%s not available)",
-                    subtask.id, subtask.capability_required,
-                )
-                state.append_step(
-                    subtask_id=subtask.id,
-                    action=f"resolve capability: {subtask.capability_required}",
-                    observation="skipped — capability not available (optional subtask)",
-                )
-            else:
-                raise ResolverError(
-                    f"no resource found for subtask '{subtask.id}' "
-                    f"(capability: '{subtask.capability_required}')\n"
-                    f"  available capabilities: "
-                    f"{sorted({t for m in state.resource_pool for t in m.capability_tags})}\n"
-                    f"  connect a Gateway Agent with this capability: "
-                    f"axon pa gateway add <url>"
-                )
+        # ── subtasks ainda não cobertas → fallback do operador ────────────────────
+        if unresolved:
+            self._handle_unresolved(unresolved, state)
 
         logger.info(
             "[Resolver] done — %d/%d subtasks assigned",
@@ -320,6 +315,113 @@ class Resolver:
         return all(
             self._affinity.ucb_score(ga, capability, total) == float("inf")
             for ga in self._gateways
+        )
+
+    # ── fallback: nenhum recurso elegível para uma capability ─────────────────────
+
+    def _handle_unresolved(
+        self, unresolved: list["Subtask"], state: "AgentState"
+    ) -> None:
+        """
+        Decide o destino das subtasks que ficaram sem recurso.
+
+        Opcionais são sempre SKIPPED (o plano foi desenhado para sobreviver sem
+        elas). As obrigatórias seguem o fallback_strategy do operador:
+
+          skip     → marca SKIPPED e o plano continua sem a subtask
+          fail     → registra Failure no AgentState e interrompe (ResolverError)
+          ask_user → devolve ClarificationNeeded ao usuário (ResolverClarification)
+
+        Sem política configurada, o default é fail — preserva o comportamento
+        anterior (erro duro) para um Resolver construído sem ResourcePolicyConfig.
+        """
+        from axon.pa.models import Failure, SubtaskStatus
+
+        required: list["Subtask"] = []
+        for subtask in unresolved:
+            if subtask.is_optional:
+                state.progress[subtask.id] = SubtaskStatus.SKIPPED
+                logger.info(
+                    "[Resolver] skipping optional subtask=%s (capability=%s not available)",
+                    subtask.id, subtask.capability_required,
+                )
+                state.append_step(
+                    subtask_id=subtask.id,
+                    action=f"resolve capability: {subtask.capability_required}",
+                    observation="skipped — capability not available (optional subtask)",
+                )
+            else:
+                required.append(subtask)
+
+        if not required:
+            return
+
+        strategy = self._policy.fallback_strategy if self._policy else "fail"
+        caps = ", ".join(sorted({s.capability_required for s in required}))
+        logger.info(
+            "[Resolver] %d required subtask(s) unresolved (%s) — fallback_strategy=%s",
+            len(required), caps, strategy,
+        )
+
+        if strategy == "skip":
+            for s in required:
+                state.progress[s.id] = SubtaskStatus.SKIPPED
+                logger.warning(
+                    "[Resolver] fallback skip — subtask=%s capability=%s dropped",
+                    s.id, s.capability_required,
+                )
+                state.append_step(
+                    subtask_id=s.id,
+                    action=f"resolve capability: {s.capability_required}",
+                    observation="skipped — no resource available (fallback_strategy=skip)",
+                )
+            return
+
+        if strategy == "ask_user":
+            raise ResolverClarification(self._build_clarification(required))
+
+        # strategy == "fail" (e default sem política)
+        for s in required:
+            state.progress[s.id] = SubtaskStatus.FAILED
+            state.failures.append(Failure(
+                subtask_id=s.id,
+                tool=None,
+                error=f"no resource for capability '{s.capability_required}'",
+                reason="no connected Gateway Agent provided an eligible resource",
+            ))
+        raise ResolverError(self._fail_message(required, state))
+
+    def _build_clarification(self, subtasks: list["Subtask"]) -> "ClarificationNeeded":
+        """Monta o ClarificationNeeded (máx. 3 perguntas — contrato do modelo)."""
+        from axon.pa.models import ClarificationNeeded, ClarificationQuestion
+
+        questions = [
+            ClarificationQuestion(
+                question=(
+                    f"I couldn't find a resource for '{s.capability_required}' "
+                    f"(needed to: {s.description}). Do you have access to a system "
+                    f"that provides this capability?"
+                ),
+                ambiguous_span=s.capability_required,
+            )
+            for s in subtasks[:3]
+        ]
+        context = (
+            f"I couldn't resolve {len(subtasks)} step(s) of your request: no "
+            f"connected Gateway Agent offers the required capability."
+        )
+        extra = len(subtasks) - len(questions)
+        if extra > 0:
+            context += f" ({extra} more not shown.)"
+        return ClarificationNeeded(questions=questions, context=context)
+
+    def _fail_message(self, subtasks: list["Subtask"], state: "AgentState") -> str:
+        caps = ", ".join(sorted({s.capability_required for s in subtasks}))
+        available = sorted({t for m in state.resource_pool for t in m.capability_tags})
+        return (
+            f"no resource found for required capabilit(ies): {caps}\n"
+            f"  available capabilities: {available}\n"
+            f"  connect a Gateway Agent that provides them: axon pa gateway add <url>"
         )
 
     # ── Step 3 (política) + Step 4 (token) ────────────────────────────────────────

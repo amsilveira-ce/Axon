@@ -21,6 +21,8 @@ Resolver (resources assigned, ready to run).
   TAVILY_API_KEY=tvly-...        # for the Tavily resource (api_key)
   ```
   The arXiv tool needs no token (`auth: none`).
+- **Dependencies installed**: `uv sync` (the arXiv tool uses the `arxiv` lib,
+  already declared in `pyproject.toml`).
 - **The arXiv deep-research tool registered** in the `ga-corp` gateway (one-time):
   ```bash
   AXON_GA_CONTEXT=ga-corp axon add mcp arxiv \
@@ -140,13 +142,15 @@ to arXiv naturally.
 
 ## Notes / known limits
 
-- **No Executor yet.** The pipeline ends at the Resolver with
-  `state.resource_assignments` filled. Actually running a `ga_proxy` resource
-  (PA → `POST /ga/resources/{id}/invoke`) is the Executor's job.
+- **Executor runs the plan.** After the Resolver, the Executor calls each
+  resource (`ga_proxy` → the GA's `/invoke`; `pa_direct` → A2A/MCP), records
+  `Fact`/`Failure`, and persists the run to
+  `{data_dir}/pa/traces/{session_id}/{request_id}.json`. Replay it with
+  `axon pa inspect --session <id>`.
 - **Tokens are never persisted.** The Resolver's Step 4 only *verifies* a token
   resolves; the secret stays in the environment and is re-resolved at call time.
-- **arXiv rate limits.** The `deep_research_arxiv` tool sends a descriptive
-  User-Agent and retries once on HTTP 429; heavy back-to-back calls may still be
-  throttled by arXiv.
+- **arXiv rate limits.** The `deep_research_arxiv` tool uses the `arxiv` lib,
+  which throttles to ~1 request / 3s and retries automatically; heavy back-to-back
+  calls just wait their turn rather than erroring.
 
 See [docs/resolver.md](docs/resolver.md) for the full Resolver explanation.

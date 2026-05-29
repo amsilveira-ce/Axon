@@ -85,8 +85,10 @@ Output rules (enforced by parser — do not change):
 - depends_on must list exactly the subtask ids referenced via {{artifact:name}} in params_template.
 - output_artifact must be unique within the plan and follow snake_case.
 - The first subtask has no input_artifacts and no depends_on.
-- capability_required: use exact name from Available Resources when the capability exists there.
-  If no resource matches, use a short descriptive tag — the Resolver will query the GA.
+- capability_required: copy an EXACT tag from "Available capability tags" when a resource
+  fits the subtask. Use the capability TAG, never the resource's display name
+  (e.g. use "calculation", not "calculator"). If no tag fits, use a short descriptive
+  tag — the Resolver will query the GA.
 - is_optional: true only when the subtask genuinely does not affect the main result.
 """.strip()
 
@@ -140,13 +142,18 @@ def _build_context(
         lines = [f"- {k}: {v}" for k, v in objective.extracted_inputs.items()]
         inputs_block = "extracted inputs:\n" + "\n".join(lines)
 
-    # resources: capability tags disponíveis
+    # resources: lidera pela capability tag (o valor a copiar p/ capability_required)
     if resource_pool:
+        caps = sorted({tag for m in resource_pool for tag in m.capability_tags})
         res_lines = []
         for m in resource_pool:
             tags = ", ".join(m.capability_tags)
-            res_lines.append(f"- {m.name} [{tags}]: {m.description}")
-        resources = "\n".join(res_lines)
+            res_lines.append(f"- [{tags}] {m.name}: {m.description}")
+        resources = (
+            "Available capability tags (copy ONE exactly into capability_required "
+            f"when a resource fits): {', '.join(caps)}\n\n"
+            + "\n".join(res_lines)
+        )
     else:
         resources = "No resources available in local pool — Resolver will query the GA."
 
@@ -162,23 +169,49 @@ def _build_context(
 
 # ── Capability matching ───────────────────────────────────────────────────────
 
-def _normalize_capabilities(resource_pool: list[ResourceManifest]) -> set[str]:
-    return {tag for m in resource_pool for tag in m.capability_tags}
-
-
-def _match_capability(raw: str, available: set[str]) -> str:
+def _capability_index(
+    resource_pool: list[ResourceManifest],
+) -> tuple[set[str], dict[str, str]]:
     """
-    Se capability_required existe no pool → retorna exato.
-    Se não existe → mantém como linguagem natural para o Resolver buscar no GA.
+    Constrói (capabilities disponíveis, aliases → capability).
+
+    O alias mapeia o nome do recurso e a tool MCP (lowercased) para a capability
+    primária do recurso — rede de segurança quando o LLM emite o NOME do recurso
+    (ex.: "calculator") ou o nome da tool (ex.: "calculate") em vez da capability.
+    """
+    available: set[str]      = set()
+    alias_to_cap: dict[str, str] = {}
+    for m in resource_pool:
+        caps = m.capability_tags
+        if not caps:
+            continue
+        available.update(caps)
+        primary = caps[0]
+        alias_to_cap[m.name.lower()] = primary
+        if m.tool:
+            alias_to_cap[m.tool.lower()] = primary
+    return available, alias_to_cap
+
+
+def _match_capability(raw: str, available: set[str], alias_to_cap: dict[str, str]) -> str:
+    """
+    Canoniza capability_required para uma tag do pool quando há sinal forte;
+    senão mantém o texto (linguagem natural) para o Resolver buscar no GA.
+
+      1. tag exata          → ela
+      2. tag case-insensitive → canônica
+      3. alias (nome/tool do recurso) → capability primária do recurso
+      4. nada               → mantém raw (Resolver vai ao GA)
     """
     if raw in available:
         return raw
-    # tentativa de match parcial case-insensitive
     raw_lower = raw.lower()
     for cap in available:
         if cap.lower() == raw_lower:
             return cap
-    return raw  # mantém — Resolver vai ao GA
+    if raw_lower in alias_to_cap:
+        return alias_to_cap[raw_lower]
+    return raw
 
 
 # ── Decomposer ────────────────────────────────────────────────────────────────
@@ -269,7 +302,7 @@ class Decomposer:
           4. bare JSON array
           5. fallback com motivo explícito
         """
-        available = _normalize_capabilities(resource_pool)
+        available, alias_to_cap = _capability_index(resource_pool)
 
         # nível 1 — array direto
         json_str = _try_direct_array(raw)
@@ -330,7 +363,7 @@ class Decomposer:
                     item["id"] = f"subtask-{i + 1}"
 
                 cap = item.get("capability_required", "")
-                item["capability_required"] = _match_capability(cap, available)
+                item["capability_required"] = _match_capability(cap, available, alias_to_cap)
 
                 item["execution_strategy"] = ExecutionStrategy.REWOO.value
                 item["status"]             = SubtaskStatus.PENDING.value
