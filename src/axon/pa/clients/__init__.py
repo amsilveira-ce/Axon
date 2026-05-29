@@ -1,0 +1,1 @@
+"""axon.pa.clients — clientes de execução para A2A e MCP."""
