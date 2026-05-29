@@ -13,7 +13,8 @@ Planner → Plan (subtasks, each with capability_required)
 Resolver
     1. local pool      already have a resource? use it (zero network)
     2. Gateway Agent   otherwise ask connected GAs (UCB1 ranking)
-    3. policy filter   discard resources the operator disallows
+    3. policy filter   discard paid/over-cost resources (operator policy)
+    4. token           discard resources whose auth token isn't configured
     ↓
 state.resource_assignments  { subtask_id → ResolverResult }
 ```
@@ -117,43 +118,63 @@ The GA returns a list ranked by `match_score`. The Resolver keeps the best as
 `ResolverResult.manifest` and the rest as `alternatives`, then appends the chosen
 manifest to `state.resource_pool` and persists it to the resource cache.
 
-## Step 3 — the operator policy filter
+## Step 3 — operator policy (paid / cost)
 
-A GA returning a resource does not mean the PA is *allowed* to use it. Before a
-manifest is accepted, the Resolver applies the operator's
-`ResourcePolicyConfig` (from `axon.config.json`, under `pa.resource_policy`).
-
-### What gets checked
-
-For every returned manifest, combining the operator policy with the resource's
-own declared `ResourcePolicy` (`is_paid`, `cost_per_call`) and its auth state:
+A GA returning a resource does not mean the PA is *allowed* to use it. The
+Resolver first applies the operator's `ResourcePolicyConfig` (from
+`axon.config.json`, under `pa.resource_policy`) — the **economic** rules:
 
 | check | discarded when |
 |-------|----------------|
 | paid | `manifest.policy.is_paid` and `allow_paid = false` |
 | cost | `cost_per_call > max_cost_per_call` |
-| auth | `require_auth_setup = true` and the resource needs a token that is not configured |
 
-The auth check uses the [TokenResolver](mcp-resources.md#architecture) convention:
-a resource with `bearer`/`api_key` auth needs a secret in
-`AXON_SECRET_<NAME>` (or its explicit `env_var`). If it is missing, the discard
-reason tells the operator exactly which variable to set. A discarded resource is
-dropped silently from the candidate list — if the best match is filtered out, a
-cheaper/free alternative can still win; if all are filtered, the Resolver tries
-the next gateway.
+A discarded resource is dropped silently from the candidate list — if the best
+match is filtered out, a cheaper/free alternative can still win; if all are
+filtered, the Resolver tries the next gateway.
+
+## Step 4 — token resolution (auth)
+
+A resource that passed policy still has to be *callable*. For any resource whose
+`auth.scheme` is not `none` (and not `oauth`, which is interactive), the Resolver
+resolves the token through the [TokenResolver](mcp-resources.md#architecture)
+convention — a secret in `AXON_SECRET_<NAME>` or the resource's explicit
+`env_var`:
+
+```
+auth.scheme = bearer, env_var = None
+  → infer AXON_SECRET_HEALTH_SEARCH
+  → token present  → resource is callable, keep it
+  → token missing  → discard, log "set AXON_SECRET_HEALTH_SEARCH para habilitar"
+
+auth.scheme = none
+  → nothing to resolve, keep it
+```
+
+This is **fail-fast**: a resource you cannot authenticate to is dropped *here*,
+at resolution, with an explicit diagnostic — not deep inside the Executor at run
+time. There is no flag to disable it; an unusable resource is never added to the
+pool.
+
+> The token is **only verified**, never stored on the manifest. Manifests are
+> persisted to `resource_cache.json` and to run traces, so writing the secret
+> there would leak it. The Executor re-resolves the token from the environment at
+> call time (the same path `MCPClient` already uses).
 
 ### The shared evaluator
 
-The same eligibility logic backs both the Resolver and the CLI. It lives in
-`pa/policy.py` as `evaluate(manifest, policy) → ResourceEligibility`. The
-Resolver calls it to filter; the operator commands call it to display status.
-**What the operator sees as "ready" is exactly what the Resolver will accept.**
+Both checks live in `pa/policy.py`: `policy_violations()` (Step 3) and
+`token_status()` (Step 4). `evaluate(manifest, policy)` runs both and is what the
+CLI calls to render eligibility. The Resolver runs them as two distinct steps but
+reaches the same verdict — **what the operator sees as "ready" in
+`axon pa gateway resources` is exactly what the Resolver will accept.**
 
-### UCB is not penalized by policy
+### UCB is not penalized
 
-The bandit reward is recorded *before* the policy filter runs. A gateway that
-returns an excellent match still earns its retrieval reward even if the operator
-blocks the resource — the restriction is the operator's, not the gateway's.
+The bandit reward is recorded *before* Steps 3 and 4 run. A gateway that returns
+an excellent match still earns its retrieval reward even if policy blocks the
+resource or its token is missing — those are the operator's/environment's
+concern, not a failure of the gateway's retrieval.
 
 ## The operator workflow
 
@@ -224,11 +245,11 @@ are wanted → `gateway resources --filter eligible` to confirm.
 
 ## Current status
 
-Steps 1–3 are implemented and wired into `PrincipalAgent.run()`. Resource
+Steps 1–4 are implemented and wired into `PrincipalAgent.run()`. Resource
 declarations (`is_paid`, `cost_per_call`) are captured at registration via
 `axon add mcp --paid --cost-per-call` and travel registry → `/ga/resources` and
 `/ga/resources/search` → manifest, so the policy filter and the eligibility table
-reflect real pricing.
+reflect real pricing; auth is resolved live in Step 4.
 
 The **Executor** is not built yet. Its hook is the final piece of the reward
 loop: after running each subtask it calls `update_final(ga_url, capability,

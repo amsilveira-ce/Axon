@@ -142,13 +142,10 @@ def _render_eligibility(rows, *, filter_: str | None = None) -> int:
             mark     = "[green]✓[/green]" if r.auth_ready else "[red]✗[/red]"
             auth_col = f"{r.auth_scheme} {mark}"
 
-        if r.eligible:
-            status = "[green]✓ pronto[/green]"
-            # política permite, mas o token falta → avisa (vai falhar na execução)
-            if not r.auth_ready and r.auth_env_var:
-                status += f" [dim](set {r.auth_env_var})[/dim]"
-        else:
-            status = "[red]✗[/red] " + " · ".join(r.reasons)
+        status = (
+            "[green]✓ pronto[/green]" if r.eligible
+            else "[red]✗[/red] " + " · ".join(r.reasons)
+        )
         table.add_row(f"[bold]{r.resource_name}[/bold]", pricing, auth_col, status)
 
     console.print(table)

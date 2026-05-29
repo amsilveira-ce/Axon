@@ -221,15 +221,16 @@ class ResourcePolicyConfig(BaseModel):
 
     allow_paid:         PA pode usar recursos com is_paid=true?
     max_cost_per_call:  custo máximo por chamada em USD (None = sem limite)
-    require_auth_setup: descartar recursos que exigem auth sem token configurado?
     fallback_strategy:  o que fazer quando nenhum recurso é elegível
+
+    Nota: recursos com auth != none cujo token não está configurado são sempre
+    descartados pelo Resolver (Step 4, fail-fast) — não há flag para desativar.
       "skip"     → ignora a subtask, continua o plano
       "fail"     → interrompe com erro
       "ask_user" → retorna ClarificationNeeded ao usuário
     """
     allow_paid:          bool                              = True
     max_cost_per_call:   float | None                      = None
-    require_auth_setup:  bool                              = False
     fallback_strategy:   Literal["skip", "fail", "ask_user"] = "ask_user"
     # match mínimo (0..1) para o Resolver aceitar um recurso vindo do GA.
     # Abaixo disso a capability segue pendente. Aplica-se ao retrieval do GA.

@@ -531,16 +531,17 @@ axon pa policy set --allow-paid true --match-threshold 0.75
 |---|---|
 | `--allow-paid` | `true` / `false` — may the PA use paid resources? |
 | `--max-cost-per-call` | Maximum USD per call (`0` = no limit) |
-| `--require-auth-setup` | `true` / `false` — discard resources whose token is not configured |
 | `--match-threshold` | Minimum GA match score (`0.0`–`1.0`) to accept a resource |
 | `--fallback-strategy` | What to do when nothing is eligible: `skip`, `fail`, or `ask_user` |
 
-Each field is documented in [Configuration](configuration.md); how the Resolver
-applies them is in [Resource resolution → Step 3](resolver.md#step-3--the-operator-policy-filter).
+The policy covers economics (paid / cost) and acceptance threshold. Auth is not
+a policy choice: a resource with `auth != none` whose token is not configured is
+always discarded by the Resolver (Step 4, fail-fast). How the Resolver applies
+all of this is in [Resource resolution](resolver.md#step-3--operator-policy-paid--cost).
 
 ```bash
-# a strict policy: no paid resources, tokens required, cheap calls only
-axon pa policy set --allow-paid false --require-auth-setup true --max-cost-per-call 0.01
+# a strict policy: no paid resources, cheap calls only
+axon pa policy set --allow-paid false --max-cost-per-call 0.01
 
 # later, allow paid resources after reviewing them
 axon pa policy set --allow-paid true

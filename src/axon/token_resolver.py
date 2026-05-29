@@ -205,7 +205,9 @@ def resolve_or_raise(manifest: ResourceManifest) -> ResolvedAuth | None:
     Igual a resolve(), mas levanta TokenResolverError se o token é necessário
     e não está configurado.
 
-    Usado quando require_auth_setup=True na ResourcePolicyConfig.
+    Variante "or raise" de resolve(). O Resolver usa resolve() diretamente no
+    Step 4 (token) para decidir descarte; esta variante existe para chamadores
+    que preferem exceção a None.
     """
     auth    = manifest.auth
     # none/oauth não têm token estático — nada a exigir do ambiente.

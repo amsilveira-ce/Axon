@@ -252,13 +252,13 @@ class Resolver:
                     latency_ms=result.latency_ms,
                 )
 
-            # Step 3 — filtro de política do operador (descarta silenciosamente)
-            allowed = self._apply_policy(
+            # Step 3 (política) + Step 4 (token) — descarta os inelegíveis
+            allowed = self._filter_candidates(
                 [result.manifest, *result.alternatives], pending
             )
             if not allowed:
                 logger.info(
-                    "[Resolver] step3 — todos os candidatos de %s descartados por política (subtask=%s)",
+                    "[Resolver] step3/4 — todos os candidatos de %s descartados (subtask=%s)",
                     ga_url, pending.subtask_id,
                 )
                 continue
@@ -320,38 +320,45 @@ class Resolver:
             for ga in self._gateways
         )
 
-    # ── Step 3 — filtro de política ──────────────────────────────────────────────
+    # ── Step 3 (política) + Step 4 (token) ────────────────────────────────────────
 
-    def _apply_policy(
+    def _filter_candidates(
         self, manifests: list[ResourceManifest], pending: PendingCapability
     ) -> list[ResourceManifest]:
         """
-        Filtra os manifests pela ResourcePolicyConfig do operador, preservando a
-        ordem (best-first do GA). Descarta silenciosamente — só loga o motivo.
+        Descarta candidatos por duas etapas distintas, preservando a ordem
+        (best-first do GA). Usa os mesmos checks que a CLI mostra na tabela.
+
+          Step 3 — política do operador (pago / custo)
+          Step 4 — token: auth != none/oauth precisa do segredo resolvível
+
+        Falha cedo: um recurso sem token configurado é descartado AQUI, não na
+        execução. Nenhum dos descartes penaliza o UCB.
         """
+        from axon.pa.policy import policy_violations, token_status
+
         kept: list[ResourceManifest] = []
         for m in manifests:
-            ok, reason = self._passes_policy(m)
-            if ok:
-                kept.append(m)
-            else:
+            # Step 3 — política econômica
+            viol = policy_violations(m, self._policy)
+            if viol:
                 logger.info(
-                    "[Resolver] step3 descarte subtask=%s resource=%s — %s",
+                    "[Resolver] step3 descarte (política) subtask=%s resource=%s — %s",
+                    pending.subtask_id, m.name, "; ".join(viol),
+                )
+                continue
+
+            # Step 4 — resolução de token (fail-fast)
+            ready, _env, reason = token_status(m)
+            if not ready:
+                logger.info(
+                    "[Resolver] step4 descarte (token) subtask=%s resource=%s — %s",
                     pending.subtask_id, m.name, reason,
                 )
+                continue
+
+            kept.append(m)
         return kept
-
-    def _passes_policy(self, manifest: ResourceManifest) -> tuple[bool, str | None]:
-        """
-        Aplica a política do operador a um manifest, via o avaliador compartilhado
-        (pa/policy.py) — mesma lógica que a CLI usa para mostrar elegibilidade.
-
-        Retorna (True, None) se passa; (False, motivos) se descartado.
-        Não toca no UCB — a restrição é do operador, não do recurso.
-        """
-        from axon.pa.policy import evaluate
-        elig = evaluate(manifest, self._policy)
-        return elig.eligible, ("; ".join(elig.reasons) if elig.reasons else None)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
