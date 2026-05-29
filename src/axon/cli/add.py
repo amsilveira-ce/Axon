@@ -2,8 +2,8 @@ import typer
 import secrets
 from axon.validator import validate_agent
 from axon.types import Resource, ResourceType, ResourceStatus
-from axon.registry import add_resource
-from axon.tokens import mark_used
+from axon.ga.registry import add_resource
+from axon.ga.tokens import mark_used
 from axon.cli._print import console, ok, info, warn, step, divider, fatal
 from urllib.parse import urlparse
 
@@ -29,7 +29,7 @@ def add_agent(
       capabilities.extensions[*].params["token"]
     """
     from axon.health import check_agent
-    from axon.registry import update_resource_status
+    from axon.ga.registry import update_resource_status
     
     _validate_url(url)
  
@@ -162,7 +162,7 @@ def add_agent(
         console.print(info("[dim]contact the Gateway provider for documentation on how PAs will invoke your agent[/dim]"))
  
     # Aviso de expiração do token
-    from axon.tokens import read_store
+    from axon.ga.tokens import read_store
     store = read_store()
     token_entry = next((t for t in store.tokens if t.used_by == resource.id), None)
     if token_entry and token_entry.expires_at:
@@ -187,7 +187,7 @@ def remove(
     name: str = typer.Argument(..., help="Resource name"),
 ) -> None:
     """Unregister a resource from the Gateway."""
-    from axon.registry import remove_resource as _remove
+    from axon.ga.registry import remove_resource as _remove
  
     removed = _remove(name)
     if removed is None:

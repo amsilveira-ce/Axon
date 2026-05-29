@@ -19,7 +19,7 @@ _ENV_GA_CONTEXT = "AXON_GA_CONTEXT"
 # ======================================================
 #   Default local tools
 # ======================================================
-# sim está hardocoded por hora 
+
 DEFAULT_LOCAL_TOOLS: dict = {
     "version": "0.1.0",
     "tools": [
@@ -123,31 +123,18 @@ def ga_paths(context: str | None = None, cwd: Path | None = None) -> GAPaths:
     Retorna GAPaths para o contexto GA ativo.
 
     Prioridade:
-      1. AXON_GA_CONTEXT env var 
+      1. AXON_GA_CONTEXT env var
       2. context argumento
       3. config.current_gateway
       4. "default"
     """
-
-    # para conseguir trocar o GA em contexto de containers sem ter que mudar a imagem 
-    #   docker run -e axon_ga_context = ga_corp
-    # Checando o arquivo com cli/ga/serve é possivel ver que usamos a variavel como 
-    # usamos o resolver do GAConfig; Dentro do GAConfig.resolver() tem uma hierarquia de 
-    # configuração que segue primeiro o argumento, depois a variavel de ambiente e por fim se
-    # nenhum deses é passo o default que é o GA obrigatoriamente criado com o axon init 
     env_ctx = os.environ.get(_ENV_GA_CONTEXT)
     ctx     = env_ctx or context
 
     try:
-        # Adendo que o contexto é sempre relacionado com o gateway agent que o operador do ga 
-        # vai estar configurando na cli, para permitir melhor experiência e manter a ideia de 
-        # que um operador tem a liberdade sim de criar um gateway agent que pode funcionar como 
-        # um produto sozinho desaclopado do PA; Contudo para mvp nós vamos manter ele atrelado 
-        # à existencia do axon.config.json primeiro atraves do axon init 
         cfg = read_config(cwd)
         if ctx is None:
             ctx = cfg.current_gateway
-
         ga_cfg = cfg.gateways.get(ctx or "default")
         if ga_cfg:
             base = cwd or Path.cwd()
@@ -210,11 +197,25 @@ class IntentExtractorConfig(BaseModel):
     intents: dict       = Field(default_factory=dict)
 
 
+class ConnectedGateway(BaseModel):
+    """
+    Gateway Agent conectado ao PA.
+    Persistido no momento do axon pa gateway add — sobrevive ao GA offline.
+    """
+    url:          str
+    name:         str
+    version:      str              = "0.1.0"
+    trust_level:  str              = "unknown"
+    organization: str | None       = None
+    added_at:     datetime         = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_seen:    datetime | None  = None
+
+
 class PAConfig(BaseModel):
     port:              int                   = 4100
     default_reasoning: str                   = "react"
     max_iterations:    int                   = 10
-    gateways:          list[str]             = Field(default_factory=list)
+    gateways:          list[ConnectedGateway] = Field(default_factory=list)
     llm:               LLMConfig             = Field(default_factory=LLMConfig)
     budget:            BudgetConfig          = Field(default_factory=BudgetConfig)
     conversation:      ConversationConfig    = Field(default_factory=ConversationConfig)

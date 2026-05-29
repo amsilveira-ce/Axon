@@ -6,7 +6,7 @@ from pathlib import Path
 import typer
 
 from axon.config import (
-    AxonConfig, PAConfig, GAInstanceConfig,
+    AxonConfig, PAConfig, GAInstanceConfig, ConnectedGateway,
     DEFAULT_LOCAL_TOOLS,
     config_exists, write_config,
     resolve_data_dir, AxonPaths, GAPaths,
@@ -91,8 +91,14 @@ def init(
         retrieval_strategy, embedding_model = pick_retrieval_strategy(ollama_host=ollama_host)
 
     # monta config
-    local_ga_url = f"http://localhost:{ga_port}"
-    pa = pa.model_copy(update={"gateways": [local_ga_url]})
+    local_ga_entry = ConnectedGateway(
+        url=f"http://localhost:{ga_port}",
+        name="Axon Local Gateway",
+        version="0.1.0",
+        trust_level="local",
+        organization="local",
+    )
+    pa = pa.model_copy(update={"gateways": [local_ga_entry]})
 
     ga_instance = GAInstanceConfig(
         name="Axon Local Gateway",
