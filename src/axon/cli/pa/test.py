@@ -1,12 +1,21 @@
 """
 cli/pa/test.py — axon pa intent test
 
-Roda IntentExtractor + Decomposer e mostra o resultado completo.
-Útil para verificar se o pipeline está funcionando corretamente
-antes de implementar o Executor.
+Roda o pipeline do PA e mostra o roadmap completo, etapa por etapa:
+
+  1. IntentExtraction  query → Objective
+  2. Decomposer        Objective → subtasks → Plan + DAG
+  3. Resolver          Plan → recurso por subtask (local pool / Gateway Agent)
+
+A etapa do Resolver mostra TODAS as suas decisões: pool local (cache hit),
+ranking UCB dos gateways, broadcast, filtro de política e a atribuição final.
+Útil para entender o que o PA faz antes do Executor existir.
 """
 
 from __future__ import annotations
+
+import logging
+from contextlib import contextmanager
 
 import typer
 
@@ -15,20 +24,48 @@ from axon.cli._print import console, ok, warn, info, step, divider, fatal
 app = typer.Typer(help="Test PA pipeline steps.")
 
 
+# ── captura de logs de uma etapa ────────────────────────────────────────────────
+
+class _ListHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(level=logging.INFO)
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage())
+
+
+@contextmanager
+def _capture(*logger_names: str):
+    """Captura mensagens INFO dos loggers dados durante o bloco."""
+    handler = _ListHandler()
+    loggers = [logging.getLogger(n) for n in logger_names]
+    saved   = [(lg, lg.level) for lg in loggers]
+    for lg in loggers:
+        lg.addHandler(handler)
+        lg.setLevel(logging.INFO)
+    try:
+        yield handler.lines
+    finally:
+        for lg, lvl in saved:
+            lg.removeHandler(handler)
+            lg.setLevel(lvl)
+
+
 @app.command("test")
 def intent_test(
-    query:   str       = typer.Option(..., "--query", "-q", help="Query to test"),
-    verbose: bool      = typer.Option(False, "--verbose", "-v", help="Show context injected into the LLM"),
+    query:   str  = typer.Option(..., "--query", "-q", help="Query to test"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show context injected into the LLM"),
 ) -> None:
     """
-    Run IntentExtractor + Decomposer and print the full result.
-
-    Shows: context injected → Objective → Plan (subtasks with params).
+    Run the full PA pipeline (Intent → Decomposer → Resolver) and print each stage.
     """
     from axon.config import read_config, paths
     from axon.pa.agent import PrincipalAgent
     from axon.pa.decomposer import Decomposer
+    from axon.pa.models import AgentState
     from axon.pa.planner import Planner, PlanError
+    from axon.pa.resolver import ResolverError
 
     try:
         config = read_config()
@@ -43,11 +80,14 @@ def intent_test(
     )
 
     console.print()
+    console.print(f"  [bold]PA pipeline — roadmap[/bold]")
     console.print(f"  {step(f'query  [dim]{query}[/dim]')}")
     console.print(divider())
 
-    # ── IntentExtractor ───────────────────────────────────────────────
-    console.print(f"  {step('extracting intent...')}")
+    # ── 1. IntentExtraction ───────────────────────────────────────────────
+    console.print()
+    console.print(f"  [bold cyan]1. IntentExtraction[/bold cyan]  [dim]query → Objective[/dim]")
+    console.print(divider())
 
     try:
         intent, trace = agent._intent_extractor.extract(
@@ -64,7 +104,6 @@ def intent_test(
         from axon.cli.pa._trace import print_trace
         print_trace(agent.last_trace)
 
-    # clarification?
     if intent.clarification is not None:
         console.print()
         console.print(warn("[bold]needs clarification — cannot decompose[/bold]"))
@@ -77,36 +116,31 @@ def intent_test(
         console.print()
         return
 
-    # Objective
-    console.print()
     console.print(f"  {ok('[bold]objective[/bold]')}")
     console.print(info(f"goal       [dim]{intent.goal}[/dim]"))
     console.print(info(f"success    [dim]{intent.success_definition}[/dim]"))
-    if intent.extracted_inputs:
-        for k, v in intent.extracted_inputs.items():
-            console.print(info(f"input      [dim]{k}: {v}[/dim]"))
+    for k, v in (intent.extracted_inputs or {}).items():
+        console.print(info(f"input      [dim]{k}: {v}[/dim]"))
     if intent.capability_hints:
         console.print(info(f"hints      [dim]{', '.join(intent.capability_hints)}[/dim]"))
-    if intent.constraints:
-        for c in intent.constraints:
-            console.print(info(f"constraint [dim][{c.type}] {c.value}[/dim]"))
+    for c in intent.constraints:
+        console.print(info(f"constraint [dim][{c.type}] {c.value}[/dim]"))
 
-    # ── Decomposer ────────────────────────────────────────────────────
+    # ── 2. Decomposer + Planner ───────────────────────────────────────────
     console.print()
-    console.print(f"  {step('decomposing into subtasks (ReWOO)...')}")
+    console.print(f"  [bold cyan]2. Decomposer[/bold cyan]  [dim]Objective → subtasks → Plan + DAG[/dim]")
     console.print(divider())
-
-    from axon.pa.models import AgentState
 
     decomposer = Decomposer(config.pa)
     planner    = Planner()
 
+    state = AgentState(
+        raw_query=query,
+        objective=intent,
+        resource_pool=agent._local_pool.tools + agent._resource_cache.all(),
+    )
+
     try:
-        state = AgentState(
-            raw_query=query,
-            objective=intent,
-            resource_pool=agent._local_pool.tools + agent._resource_cache.all(),
-        )
         decomposer.decompose(state)
     except Exception as exc:
         fatal(f"Decomposer error: {exc}")
@@ -119,16 +153,48 @@ def intent_test(
         console.print()
         return
 
-    plan = state.plan
+    _print_plan(state.plan)
+    _print_dag(state.plan)
 
-    # ordem topológica
-    topo_order = " → ".join(s.id for s in plan.subtasks)
+    # ── 3. Resolver ───────────────────────────────────────────────────────
+    console.print()
+    console.print(f"  [bold cyan]3. Resolver[/bold cyan]  [dim]Plan → recurso por subtask[/dim]")
+    console.print(divider())
+
+    gw = [g.url for g in config.pa.gateways]
+    console.print(info(f"local pool  [dim]{len(state.resource_pool)} resources[/dim]"))
+    console.print(info(f"gateways    [dim]{', '.join(gw) if gw else 'none connected'}[/dim]"))
+    console.print()
+
+    with _capture("axon.pa.resolver") as resolver_log:
+        try:
+            agent._resolver.resolve(state)
+            resolver_error = None
+        except ResolverError as exc:
+            resolver_error = exc
+
+    # passos do Resolver (step1 local / step2 UCB+broadcast / step3 política)
+    if resolver_log:
+        console.print(f"  {step('resolver steps')}")
+        for line in resolver_log:
+            console.print(info(f"[dim]{line}[/dim]"))
+        console.print()
+
+    _print_assignments(state)
+    _print_affinity(agent._affinity)
+
+    if resolver_error is not None:
+        console.print()
+        console.print(warn(f"[bold]ResolverError[/bold]  [dim]{resolver_error}[/dim]"))
 
     console.print()
+
+
+# ── render helpers ──────────────────────────────────────────────────────────────
+
+def _print_plan(plan) -> None:
     console.print(f"  {ok(f'[bold]plan[/bold]  [dim]{len(plan.subtasks)} subtask(s)[/dim]')}")
-    console.print(info(f"[dim]order  {topo_order}[/dim]"))
     console.print()
-
     for s in plan.subtasks:
         console.print(f"  [cyan]◆[/cyan] [bold]{s.id}[/bold]  [dim]{s.description}[/dim]")
         console.print(info(f"capability  [dim]{s.capability_required}[/dim]"))
@@ -139,14 +205,83 @@ def intent_test(
         if s.depends_on:
             console.print(info(f"depends_on  [green]{', '.join(s.depends_on)}[/green]"))
         else:
-            console.print(info(f"depends_on  [dim]none (root)[/dim]"))
-        if s.params_template:
-            for k, v in s.params_template.items():
-                console.print(info(f"param [{k}]  [dim]{v}[/dim]"))
+            console.print(info("depends_on  [dim]none (root)[/dim]"))
+        for k, v in (s.params_template or {}).items():
+            console.print(info(f"param [{k}]  [dim]{v}[/dim]"))
         if s.is_optional:
             console.print(info("[dim]optional[/dim]"))
         console.print(divider())
 
+
+def _print_dag(plan) -> None:
+    """Mostra o DAG: arestas de dependência + camadas topológicas."""
+    subtasks = plan.subtasks
+    if not subtasks:
+        return
+
+    # nível topológico de cada subtask (subtasks já vêm ordenadas)
+    level: dict[str, int] = {}
+    for s in subtasks:
+        level[s.id] = 0 if not s.depends_on else 1 + max(level[d] for d in s.depends_on)
+
+    by_level: dict[int, list[str]] = {}
+    for s in subtasks:
+        by_level.setdefault(level[s.id], []).append(s.id)
+
     console.print()
-    console.print(info(f"[dim]state.progress: {dict(state.progress)}[/dim]"))
+    console.print(f"  {ok('[bold]DAG[/bold]')}")
+
+    # arestas
+    edges = [f"{d} → {s.id}" for s in subtasks for d in s.depends_on]
+    console.print(info(f"edges       [dim]{', '.join(edges) if edges else 'none (all roots)'}[/dim]"))
+
+    # camadas — o que pode rodar em paralelo em cada passo
+    layers = " │ ".join(
+        f"L{lv}: {', '.join(by_level[lv])}"
+        for lv in sorted(by_level)
+    )
+    console.print(info(f"layers      [dim]{layers}[/dim]"))
+
+
+def _print_assignments(state) -> None:
+    from rich.table import Table
+
+    if not state.resource_assignments:
+        console.print(info("[dim]no resources assigned[/dim]"))
+        return
+
+    table = Table(show_header=True, header_style="dim", box=None, pad_edge=False, padding=(0, 3, 0, 0))
+    table.add_column("subtask")
+    table.add_column("capability")
+    table.add_column("resource")
+    table.add_column("source")
+    table.add_column("match")
+
+    for s in state.plan.subtasks:
+        rr = state.resource_assignments.get(s.id)
+        if rr is None:
+            table.add_row(s.id, s.capability_required, "[red]— unresolved[/red]", "", "")
+            continue
+        source = (
+            f"[cyan]GA[/cyan] {rr.ga_url}  [dim]{rr.latency_ms:.0f}ms[/dim]"
+            if rr.ga_url else "[dim]local pool[/dim]"
+        )
+        match = f"{rr.match_score:.2f}" if rr.ga_url else "[dim]—[/dim]"
+        table.add_row(s.id, s.capability_required, f"[bold]{rr.manifest.name}[/bold]", source, match)
+
+    console.print(f"  {ok('[bold]assignments[/bold]')}")
+    console.print(table)
+
+
+def _print_affinity(affinity) -> None:
+    """Tabela UCB por (gateway, capability) após o resolve."""
+    table = getattr(affinity, "_table", {})
+    if not table:
+        return
     console.print()
+    console.print(f"  {step('gateway affinity (UCB)')}")
+    for ga_url, caps in table.items():
+        for cap, e in caps.items():
+            console.print(info(
+                f"[dim]{ga_url} [{cap}] queries={e.query_count} reward={e.reward_mean:.3f}[/dim]"
+            ))
