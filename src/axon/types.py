@@ -6,6 +6,11 @@ from typing import Literal
 from pydantic import AliasChoices, BaseModel, Field
 from typing import Any
 
+ 
+# URI - para extender o card do gateway agent e dos recursos 
+AXON_EXTENSION_URI = "https://axon-framework.dev/extensions/registry/v1"
+AXON_GATEWAY_EXTENSION_URI = "axon-framework.dev/extensions/gateway/v1"
+
 
 class OperationalMode(str, Enum):
     agent   = "agent"
@@ -112,9 +117,7 @@ class AgentExtension(BaseModel):
  
     model_config = {"extra": "allow"}
  
- 
-# URI canônica da extensão Axon — identifica globalmente o registry Axon
-AXON_EXTENSION_URI = "https://axon-framework.dev/extensions/registry/v1"
+
 
 class A2ASkill(BaseModel):
     """
@@ -304,4 +307,60 @@ class ResourceManifest(BaseModel):
     transport:       Literal["stdio", "http"]         = "http"
     command:         list[str] | None                 = None   # stdio
     endpoint:        str | None                       = None   # http
+ 
+
+class GatewayAxonMetadata(BaseModel):
+    """
+    Extensão Axon declarada no GatewayCard.capabilities.extensions.
+ 
+    Carrega os campos específicos do ecossistema Axon que um cliente A2A
+    genérico ignoraria — mas que o PA usa para avaliar confiança e capacidades.
+ 
+    trust_level:
+        "local"   → GA operado pela própria organização — confiança máxima
+        "vendor"  → GA de vendor com SLA conhecido (Azure, Google, etc.)
+        "unknown" → padrão — PA emite warning ao conectar
+    """
+    axon_version: str 
+    organization: str | None 
+    trust_level: Literal["local", "vendor", "unkown"]
+    resources_count: int 
+    accepted_types: list[str]
+    requires_token: bool 
+
+    # model_config = {}
+
+
+class GatewayCard(BaseModel):
+    """
+    Cartão de identidade do Gateway Agent — exposto em GET /ga/card.
+ 
+    Base A2A — interoperável com qualquer cliente do protocolo A2A.
+    Extensão Axon — campos específicos acessíveis via property .axon.
+ 
+    O mesmo padrão do AgentCard: vendors que já expõem agent cards A2A
+    podem adicionar a extensão axon-framework.dev/extensions/gateway/v1
+    e ser reconhecidos automaticamente pelo PA.
+    """
+    name:         str
+    description:  str                  = ""
+    url:          str
+    version:      str                  = "0.1.0"
+    capabilities: A2ACapabilities      = Field(default_factory=A2ACapabilities)
+ 
+    model_config = {"extra": "allow"}
+ 
+    @property
+    def axon(self) -> GatewayAxonMetadata | None:
+        """
+        Localiza a extensão Axon em capabilities.extensions.
+        Retorna None se não encontrada — gateway sem extensão Axon.
+        """
+        for ext in self.capabilities.extensions:
+            if ext.uri == AXON_GATEWAY_EXTENSION_URI:
+                try:
+                    return GatewayAxonMetadata.model_validate(ext.params)
+                except Exception:
+                    return None
+        return None
  
