@@ -82,7 +82,7 @@ Local tools cover always-available, machine-local capabilities (calculation, fil
 
 Agents communicate with the PA via the A2A protocol. Each agent exposes an agent card at `/.well-known/agent.json` describing its capabilities and skills. The GA uses this card to register and validate the agent.
 
-MCP tools are also supported and wrapped as callable resources by the GA.
+MCP tools are also supported and wrapped as callable resources by the GA. Unlike A2A agents, third-party MCP servers cannot embed an Axon token, so they are proven valid by a **live connection** at registration time, with an optional operator-supplied admission token. See [Third-party MCP resources](mcp-resources.md).
 
 ## Design decisions
 
