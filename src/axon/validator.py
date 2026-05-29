@@ -4,7 +4,7 @@ import httpx
 from pydantic import ValidationError
 import json 
 import hashlib
-from axon.tokens import TokenVerificationError, verify_local
+from axon.ga.tokens import TokenVerificationError, verify_local
 from axon.types import AgentCard, AxonMetadata, AXON_EXTENSION_URI
  
 AXON_TOKEN_PREFIX           = "axon_tk_"

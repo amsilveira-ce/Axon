@@ -3,7 +3,7 @@ from rich.table import Table
 from rich import box
 from datetime import timezone
 from axon.cli._print import console, ok, info, warn, fatal, divider, step
-from axon.tokens import generate, list_tokens, TokenVerificationError, revoke
+from axon.ga.tokens import generate, list_tokens, TokenVerificationError, revoke
 
 
 app = typer.Typer(help="Create, inspect, and revoke Axon registration tokens.")
