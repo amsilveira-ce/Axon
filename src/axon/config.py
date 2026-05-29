@@ -231,6 +231,9 @@ class ResourcePolicyConfig(BaseModel):
     max_cost_per_call:   float | None                      = None
     require_auth_setup:  bool                              = False
     fallback_strategy:   Literal["skip", "fail", "ask_user"] = "ask_user"
+    # match mínimo (0..1) para o Resolver aceitar um recurso vindo do GA.
+    # Abaixo disso a capability segue pendente. Aplica-se ao retrieval do GA.
+    match_threshold:     float                             = 0.0
 
 
 class PAConfig(BaseModel):

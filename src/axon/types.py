@@ -218,6 +218,34 @@ class GatewayCard(BaseModel):
         return None
 
 
+class PACard(BaseModel):
+    """
+    Cartão de identidade do Principal Agent — enviado ao GA em POST /pa/connect.
+
+    Espelha o GatewayCard: o GA registra a conexão para observabilidade
+    (quem está consumindo seus recursos) e futuras notificações push.
+    """
+    name:         str
+    version:      str        = "0.1.0"
+    organization: str | None = None
+    url:          str | None = None   # callback do PA, se houver
+
+    model_config = {"extra": "allow"}
+
+
+class PAConnection(BaseModel):
+    """Conexão de um PA registrada pelo GA."""
+    card:         PACard
+    connected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_seen:    datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ConnectionsFile(BaseModel):
+    """Conteúdo de .axon/ga/{context}/connections.json."""
+    version:     str                = "0.1.0"
+    connections: list[PAConnection] = Field(default_factory=list)
+
+
 class Resource(BaseModel):
     """Recurso registrado no GA (.axon/ga/{context}/registry.json)."""
     id:               str
@@ -232,6 +260,9 @@ class Resource(BaseModel):
     # auth do PA perante o recurso na execução — preenchido no add mcp,
     # consumido pelo Resolver/Executor para reconstruir o ResourceManifest.
     auth:             "AuthConfig"  = Field(default_factory=lambda: AuthConfig())
+    # política declarada pelo recurso (pago/custo) — o GA só persiste;
+    # o Resolver do PA filtra combinando com a ResourcePolicyConfig do operador.
+    policy:           "ResourcePolicy" = Field(default_factory=lambda: ResourcePolicy())
     token_ref:        str | None    = None
     registered_at:    datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
     status:           ResourceStatus = ResourceStatus.online
