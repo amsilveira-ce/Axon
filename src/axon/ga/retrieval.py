@@ -218,3 +218,49 @@ class EmbeddingIndex:
 
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:top_k]
+
+
+# ---------------------------------------------------------------------------
+#   Função de conveniência — usada por POST /ga/resources/search
+# ---------------------------------------------------------------------------
+
+def search(
+    query:        str,
+    paths:        "GAPaths",  # noqa: F821
+    capabilities: list[str] | None = None,
+    max_results:  int              = 5,
+) -> list[tuple[float, Resource]]:
+    """
+    Busca recursos do registry do contexto ativo e retorna (score, Resource)
+    ordenado por relevância — a ordem que o endpoint /ga/resources/search consome.
+
+    Filtra por capability tags (interseção com as tags das skills) quando
+    informado, e então ranqueia semanticamente via EmbeddingIndex (keyword ou
+    embedding, conforme a estratégia do GA).
+
+    Nota: constrói o índice a cada chamada — adequado ao MVP. Em produção,
+    manter um EmbeddingIndex persistente no processo do GA.
+    """
+    from axon.ga.config import GAConfig
+    from axon.ga.registry import list_resources
+
+    inst      = GAConfig.resolve().instance
+    resources = list_resources(paths)
+
+    if capabilities:
+        wanted = {c.lower() for c in capabilities}
+        resources = [
+            r for r in resources
+            if wanted & {t.lower() for s in (r.skills or []) for t in s.tags}
+        ]
+
+    index = EmbeddingIndex.build(
+        resources,
+        strategy=inst.retrieval_strategy,
+        embed_host=inst.embedding_host,
+        embed_model=inst.embedding_model,
+    )
+    threshold = inst.embedding_threshold if inst.retrieval_strategy == "embedding" else 0.0
+    hits      = index.search(query, top_k=max_results, threshold=threshold)  # [(Resource, score)]
+
+    return [(score, r) for r, score in hits]

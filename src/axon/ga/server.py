@@ -166,15 +166,18 @@ async def search_resources(req: SearchRequest) -> dict:
         "count":   len(results),
         "results": [
             {
-                "id":          r.id,
-                "name":        r.name,
-                "type":        r.type.value,
-                "endpoint":    r.endpoint,
-                "description": r.description,
-                "score":       round(score, 3),
+                "id":               r.id,
+                "name":             r.name,
+                "type":             r.type.value,
+                "protocol_binding": r.protocol_binding.value,
+                "endpoint":         r.endpoint,
+                "command":          r.command,
+                "auth":             r.auth.model_dump(mode="json"),
+                "description":      r.description,
+                "score":            round(score, 3),
                 "skills": [
                     {"id": s.id, "description": s.description, "tags": s.tags}
-                    for s in r.skills
+                    for s in (r.skills or [])
                 ],
             }
             for score, r in results

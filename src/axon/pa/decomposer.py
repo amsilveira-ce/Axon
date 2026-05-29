@@ -228,6 +228,15 @@ class Decomposer:
         subtasks = self._parse(raw, pool)
         state.plan = Plan(subtasks=subtasks)
 
+        state.append_step(
+            subtask_id="decomposer",
+            action=f"decompose objective: {state.objective.goal[:80]}",
+            observation=(
+                f"{len(subtasks)} subtask(s): "
+                + ", ".join(s.id for s in subtasks)
+            ),
+        )
+
     # ── LLM ──────────────────────────────────────────────────────────────────
 
     def _llm_decompose(self, context: str) -> str:

@@ -80,10 +80,26 @@ class Planner:
             for s in ordered_plan.subtasks
         }
 
+        topo_order = " → ".join(s.id for s in ordered_plan.subtasks)
+        deps_summary = {
+            s.id: s.depends_on
+            for s in ordered_plan.subtasks
+            if s.depends_on
+        }
+
         logger.info(
             "[Planner] plan built — %d subtask(s) in topological order: %s",
             len(ordered_plan.subtasks),
-            " → ".join(s.id for s in ordered_plan.subtasks),
+            topo_order,
+        )
+
+        state.append_step(
+            subtask_id="planner",
+            action="build DAG and topological sort",
+            observation=(
+                f"order: {topo_order}"
+                + (f" | deps: {deps_summary}" if deps_summary else " | no dependencies")
+            ),
         )
 
     def build_plan(self, subtasks: list[Subtask]) -> Plan:

@@ -152,6 +152,23 @@ class Plan(BaseModel):
     """
     subtasks: list[Subtask] = Field(default_factory=list)
 
+
+class ResolverResult(BaseModel):
+    """
+    O que o Step 2 do Resolver retorna por capability — o recurso escolhido via
+    Gateway Agent, mais fallbacks e os sinais que alimentam o GAAffinityStore.
+
+    match_score + latency_ms vão para GAAffinityStore.update_partial();
+    o ga_url identifica qual gateway recompensar/penalizar.
+    """
+    capability:   str
+    subtask_id:   str
+    manifest:     ResourceManifest              # melhor match
+    alternatives: list[ResourceManifest] = Field(default_factory=list)  # fallbacks
+    ga_url:       str                           # de onde veio
+    match_score:  float = 0.0
+    latency_ms:   float = 0.0
+
 # ---------------------------------------------------------------------------
 #   Execução — append-only
 # ---------------------------------------------------------------------------
@@ -302,9 +319,38 @@ class AgentState(BaseModel):
     # cache de chamadas na run — evita duplicatas
     # { "tool:params_hash": result }
     tool_cache:    dict[str, Any] = Field(default_factory=dict)
+
+    # atribuição de recursos por subtask — preenchido pelo Resolver
+    # { subtask_id: ResolverResult }
+    #   local (Step 1): ResolverResult com ga_url="" → Executor NÃO atualiza UCB
+    #   GA    (Step 2): ResolverResult com ga_url preenchido → update_final fecha o reward
+    resource_assignments: dict[str, ResolverResult] = Field(default_factory=dict)
  
     # ── helpers ───────────────────────────────────────────────────────────────
  
+    def append_step(
+        self,
+        subtask_id:  str,
+        action:      str,
+        observation: str,
+        reason:      str = "",   # ReWOO: sempre vazio — ReAct: raciocínio do LLM
+    ) -> None:
+        """
+        Registra uma etapa no scratchpad.
+
+        ReWOO: reason vazio — planejamento upfront, sem raciocínio por etapa.
+        ReAct: reason preenchido pelo LLM antes de cada action.
+
+        step é auto-incrementado pelo tamanho atual do scratchpad.
+        """
+        self.scratchpad.append(ScratchpadEntry(
+            step=len(self.scratchpad) + 1,
+            subtask_id=subtask_id,
+            action=action,
+            observation=observation,
+            reason=reason,
+        ))
+
     def get_fact(self, subtask_id: str) -> Fact | None:
         """Retorna o Fact de uma subtask pelo id."""
         return next(
@@ -347,4 +393,3 @@ class AgentState(BaseModel):
             for s in self.plan.subtasks
             if not s.is_optional
         )
- 

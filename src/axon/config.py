@@ -73,6 +73,7 @@ class AxonPaths:
         self.pa_resource_cache = data_dir / "pa" / "resource_cache.json"
         self.pa_memory_bank    = data_dir / "pa" / "memory_bank.json"
         self.pa_local_tools    = data_dir / "pa" / "local_tools.json"
+        self.pa_ga_affinity    = data_dir / "pa" / "ga_affinity.json"
         self.pa_traces         = data_dir / "pa" / "traces"
 
     def makedirs(self) -> None:

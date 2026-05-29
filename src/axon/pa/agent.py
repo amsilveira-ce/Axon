@@ -8,10 +8,12 @@ from axon.llms.ollama_client import OllamaClient
 from axon.pa.context.conversation import ConversationHistory
 from axon.pa.context.memory import MemoryBank
 from axon.pa.decomposer import Decomposer
+from axon.pa.ga_affinity import GAAffinityStore
 from axon.pa.planner import Planner, PlanError
 from axon.pa.intent_extractor import ExtractionTrace, IntentExtractor
 from axon.pa.local_pool import LocalResourcePool
 from axon.pa.models import AgentState, ClarificationNeeded, Objective, Plan
+from axon.pa.resolver import Resolver, ResolverError
 from axon.pa.resource_cache import ResourceCache
 
 logger = logging.getLogger(__name__)
@@ -73,6 +75,20 @@ class PrincipalAgent:
         # Step 2 — ResourceCache (recursos GA de runs anteriores)
         self._resource_cache = ResourceCache.load(self._cache_path)
         logger.info("[PA] resource cache — %d resources", len(self._resource_cache))
+
+        # Step 3 — Resolver (discovery via GA + afinidade UCB1 por gateway)
+        affinity_path = (
+            (sessions_dir.parent / "ga_affinity.json")
+            if sessions_dir else _default_affinity_path()
+        )
+        self._affinity = GAAffinityStore.load(affinity_path)
+        self._resolver = Resolver(
+            gateways=[g.url for g in config.gateways],
+            affinity=self._affinity,
+            affinity_path=affinity_path,
+            cache=self._resource_cache,
+        )
+        logger.info("[PA] resolver — %d gateway(s) configured", len(config.gateways))
 
         # MemoryBank
         self._memory = MemoryBank.load_or_create(self._memory_path)
@@ -198,14 +214,25 @@ class PrincipalAgent:
             self._persist_session()
             return response
 
-        # 3. Resolver (pendente)
-        # self._resolver.resolve(state)
+        # Step 6 — Resolver: atribui um recurso a cada subtask
+        #           (local pool → Gateway Agent via UCB1)
+        try:
+            self._resolver.resolve(state)
+        except ResolverError as exc:
+            logger.error("[PA] resolver raised: %s", exc)
+            response = (
+                f"I couldn't find a resource to perform part of your request.\n\n"
+                f"{exc}"
+            )
+            self._history.add_message("assistant", response, llm_client=self._llm_client)
+            self._persist_session()
+            return response
 
-        # 4. Executor (pendente)
+        # Executor (pendente)
         # self._executor.execute(state)
         # response = state.summary
 
-        response = self._format_plan(intent, state.plan)
+        response = self._format_plan(intent, state)
 
         self._history.add_message("assistant", response, llm_client=self._llm_client)
         self._persist_session()
@@ -259,8 +286,9 @@ class PrincipalAgent:
             lines.append(f"constraints: {', '.join(c.value for c in intent.constraints)}")
         return "\n".join(lines)
 
-    def _format_plan(self, intent: Objective, plan: Plan) -> str:
-        """Formata Objective + Plan — usado pelo run()."""
+    def _format_plan(self, intent: Objective, state: AgentState) -> str:
+        """Formata Objective + Plan + recursos atribuídos — usado pelo run()."""
+        plan = state.plan
         lines = [
             f"goal: {intent.goal}",
             f"success: {intent.success_definition}",
@@ -274,7 +302,14 @@ class PrincipalAgent:
                 lines.append(f"    output     : {s.output_artifact}")
             if s.depends_on:
                 lines.append(f"    depends_on : {', '.join(s.depends_on)}")
-        lines.extend(["", "[resolver not implemented — next step]"])
+
+            assignment = state.resource_assignments.get(s.id)
+            if assignment is not None:
+                via = f"GA {assignment.ga_url}" if assignment.ga_url else "local pool"
+                lines.append(f"    resource   : {assignment.manifest.name} (via {via})")
+            else:
+                lines.append("    resource   : — unresolved")
+        lines.extend(["", "[executor not implemented — next step]"])
         return "\n".join(lines)
 
 
@@ -330,3 +365,11 @@ def _default_local_tools_path() -> Path:
         return paths().pa_local_tools
     except Exception:
         return Path(".axon/pa/local_tools.json")
+
+
+def _default_affinity_path() -> Path:
+    try:
+        from axon.config import paths
+        return paths().pa_ga_affinity
+    except Exception:
+        return Path(".axon/pa/ga_affinity.json")
