@@ -51,7 +51,7 @@ from a2a.types.a2a_pb2 import (
     TaskPushNotificationConfig,
 )
 
-from axon.pa.token_resolver import TokenResolver
+from axon.token_resolver import TokenResolver
 from axon.types import A2ASkill, AuthScheme, ResourceManifest
 
 logger = logging.getLogger(__name__)

@@ -29,7 +29,7 @@ from axon.types import (
     AuthConfig, AuthScheme,
     ProtocolBinding, ResourceManifest, ResourceType,
 )
-from mcp_client import MCPClient
+from axon.pa.clients.mcp_client import MCPClient
 
 NOTION_MCP_URL = "https://mcp.notion.com/mcp"
 

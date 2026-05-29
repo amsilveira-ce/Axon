@@ -37,8 +37,8 @@ from axon.types import (
     AuthConfig, AuthLocation, AuthScheme,
     ProtocolBinding, ResourceManifest, ResourceType,
 )
-from axon.pa.token_resolver import resolve
-from mcp_client import MCPClient, MCPClientError
+from axon.token_resolver import resolve
+from axon.pa.clients.mcp_client import MCPClient, MCPClientError
 
 SEND_TOOL = "send-email"
 

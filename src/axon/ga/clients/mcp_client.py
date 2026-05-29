@@ -1,13 +1,19 @@
 """
-mcp_client.py — MCPClient: interface do PA para execução de tools MCP.
+pa/mcp_client.py — MCPClient: interface do PA para execução de tools MCP.
 
 Consome ResourceManifest e delega ao fastmcp o transporte correto.
 Auth é resolvida pelo TokenResolver antes de construir o transport.
 
 ProtocolBinding → transport fastmcp:
-    MCP_STDIO → StdioTransport   — spawna processo local
+    MCP_STDIO → StdioTransport          — spawna processo local
     MCP_HTTP  → StreamableHttpTransport — Streamable HTTP (spec 2024+)
-    MCP_SSE   → SSETransport     — Server-Sent Events (legado)
+    MCP_SSE   → SSETransport            — Server-Sent Events (legado)
+
+Auth (via ResolvedAuth do TokenResolver):
+    header → header HTTP
+    query  → ?param=token na URL
+    env    → injetado no env do processo stdio
+    oauth  → delegado ao fastmcp.OAuth (httpx.Auth)
 """
 
 from __future__ import annotations
@@ -19,7 +25,7 @@ from fastmcp import Client
 from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
 
 from axon.types import AuthScheme, ProtocolBinding, ResourceManifest
-from axon.pa.token_resolver import ResolvedAuth, TokenResolverError, resolve
+from axon.token_resolver import ResolvedAuth, TokenResolverError, resolve
 
 
 # ---------------------------------------------------------------------------
@@ -151,19 +157,7 @@ class MCPClient:
     def _build_transport(
         self, auth: ResolvedAuth | None
     ) -> StdioTransport | StreamableHttpTransport | SSETransport:
-        """
-        Constrói o transport a partir de manifest.protocol_binding.
-
-        MCP_STDIO → StdioTransport
-            Auth injetada no env do processo filho — servidores stdio
-            leem credenciais via os.environ por convenção (ex: RESEND_API_KEY).
-
-        MCP_HTTP → StreamableHttpTransport
-            Auth injetada como header HTTP.
-
-        MCP_SSE → SSETransport
-            Auth injetada como header HTTP.
-        """
+        """Constrói o transport a partir de manifest.protocol_binding."""
         pb = self._manifest.protocol_binding
 
         if pb == ProtocolBinding.MCP_STDIO:

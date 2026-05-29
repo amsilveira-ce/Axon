@@ -23,7 +23,7 @@ sys.path.insert(0, str(_ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 from axon.types import AuthConfig, AuthScheme, ProtocolBinding, ResourceManifest, ResourceType
-from mcp_client import MCPClient, MCPToolNotFoundError, MCPTransportError
+from axon.pa.clients.mcp_client import MCPClient, MCPToolNotFoundError, MCPTransportError
 
 
 def _require_tavily_key() -> str:
