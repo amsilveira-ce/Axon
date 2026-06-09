@@ -86,61 +86,72 @@ def run(
         memory_path=p.pa_memory_bank,
     )
 
-    # ── translate query → English ────────────────────────────────────────
-    query_en = query
-    if lang:
-        console.print(f"  {step('translating query → English...')}")
-        logger.info("[PA run] translating query → English")
+    with agent:
+        # ── translate query → English ────────────────────────────────────────
+        query_en = query
+        if lang:
+            console.print(f"  {step('translating query → English...')}")
+            logger.info("[PA run] translating query → English")
+            try:
+                query_en = agent._llm_client.generate(
+                    f"Translate the following text to English. "
+                    f"Return only the translated text, no explanations.\n\n{query}",
+                    temperature=0.0,
+                    format=None,
+                ).strip()
+            except Exception as exc:
+                logger.info("[PA run] translation (query → English) failed", exc_info=True)
+                fatal(f"Translation error (query → English): {exc}")
+
+        console.print(f"  {step('running principal agent...')}")
+        logger.info("[PA run] running principal agent")
         try:
-            query_en = agent._llm_client.generate(
-                f"Translate the following text to English. "
-                f"Return only the translated text, no explanations.\n\n{query}",
-                temperature=0.0,
-                format=None,
-            ).strip()
+            response_en = agent.run(query_en)
         except Exception as exc:
-            logger.info("[PA run] translation (query → English) failed", exc_info=True)
-            fatal(f"Translation error (query → English): {exc}")
+            logger.info("[PA run] agent run failed", exc_info=True)
+            fatal(f"Agent error while processing the query: {exc}")
 
-    console.print(f"  {step('running principal agent...')}")
-    logger.info("[PA run] running principal agent")
-    try:
-        response_en = agent.run(query_en)
-    except Exception as exc:
-        logger.info("[PA run] agent run failed", exc_info=True)
-        fatal(f"Agent error while processing the query: {exc}")
+        logger.info("[PA run] agent run finished — response length %d chars", len(response_en))
 
-    logger.info("[PA run] agent run finished — response length %d chars", len(response_en))
+        # ── verbose: mostra o pipeline completo ─────────────────────────────
+        if verbose:
+            if agent.last_trace:
+                try:
+                    from axon.cli.pa._trace import print_verbose
+                    print_verbose(agent.last_trace, agent.last_state)
+                except Exception as exc:
+                    from rich.markup import escape
+                    console.print(f"  {warn(f'verbose display error: {escape(str(exc))}')}")
+            else:
+                console.print(f"  {warn('verbose: no trace available')}")
 
-    # ── verbose: mostra contexto injetado + resultado da extração ────────
-    if verbose and agent.last_trace:
-        from axon.cli.pa._trace import print_trace
-        print_trace(agent.last_trace)
+        # ── translate response → lang ────────────────────────────────────────
+        response = response_en
+        if lang:
+            console.print(f"  {step(f'translating response → {lang}...')}")
+            logger.info("[PA run] translating response → %s", lang)
+            try:
+                response = agent._llm_client.generate(
+                    f"Translate the following text to {lang}. "
+                    f"Return only the translated text, no explanations.\n\n{response_en}",
+                    temperature=0.0,
+                    format=None,
+                ).strip()
+            except Exception as exc:
+                logger.info("[PA run] translation to %s failed: %s — showing English response", lang, exc)
+                console.print(f"  {warn(f'translation to {lang} failed ({exc}) — showing English response')}")
+                response = response_en
 
-    # ── translate response → lang ────────────────────────────────────────
-    response = response_en
-    if lang:
-        console.print(f"  {step(f'translating response → {lang}...')}")
-        logger.info("[PA run] translating response → %s", lang)
-        try:
-            response = agent._llm_client.generate(
-                f"Translate the following text to {lang}. "
-                f"Return only the translated text, no explanations.\n\n{response_en}",
-                temperature=0.0,
-                format=None,
-            ).strip()
-        except Exception as exc:
-            logger.info("[PA run] translation to %s failed: %s — showing English response", lang, exc)
-            console.print(f"  {warn(f'translation to {lang} failed ({exc}) — showing English response')}")
-            response = response_en
+        # ── print response — clean block, session as footer ──────────────────
+        console.print()
+        console.print(f"  {ok('[bold]response[/bold]')}")
+        if lang:
+            console.print(info(f"[dim]language: {lang}[/dim]"))
+        console.print()
+        for line in response.splitlines():
+            console.print(f"  [dim]│[/dim]  {line}")
+        console.print()
+        console.print(f"  [dim]session: {agent.session_id}[/dim]")
+        console.print()
 
-    console.print()
-    console.print(f"  {ok('[bold]response[/bold]')}")
-    if lang:
-        console.print(info(f"[dim]language: {lang}[/dim]"))
-    console.print(info(f"[dim]session:  {agent.session_id}[/dim]"))
-    console.print()
-    for line in response.splitlines():
-        console.print(f"  [dim]│[/dim]  {line}")
-    console.print()
     logger.info("[PA run] completed")

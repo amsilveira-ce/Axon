@@ -16,21 +16,18 @@ _logging_ready = False
 def setup_logging(verbose: bool = False) -> None:
     """Configure logging output for CLI commands.
 
-    Routes records through Rich so they share the console look & feel.
-
-    verbose=True  → INFO and above are streamed to stderr (full command trace).
-    verbose=False → only WARNING and above are shown (quiet by default).
+    Always routes WARNING+ through Rich. verbose only controls structured
+    pipeline output printed via console — not the log level.
     """
     global _logging_ready
-    level = logging.INFO if verbose else logging.WARNING
     logging.basicConfig(
-        level=level,
+        level=logging.WARNING,
         format="%(message)s",
         datefmt="[%X]",
         handlers=[RichHandler(
             console=err_console,
             show_path=False,
-            show_time=verbose,
+            show_time=False,
             rich_tracebacks=True,
             markup=True,
         )],

@@ -66,10 +66,6 @@ def intent_test(
     """
     from axon.config import read_config, paths
     from axon.pa.agent import PrincipalAgent
-    from axon.pa.decomposer import Decomposer
-    from axon.pa.models import AgentState
-    from axon.pa.planner import Planner, PlanError
-    from axon.pa.resolver import ResolverClarification, ResolverError
 
     try:
         config = read_config()
@@ -82,6 +78,16 @@ def intent_test(
         sessions_dir=p.pa_sessions,
         memory_path=p.pa_memory_bank,
     )
+
+    with agent:
+        _run_pipeline(agent, config, query, verbose, dry_run)
+
+
+def _run_pipeline(agent, config, query, verbose, dry_run) -> None:
+    from axon.pa.decomposer import Decomposer
+    from axon.pa.models import AgentState
+    from axon.pa.planner import Planner, PlanError
+    from axon.pa.resolver import ResolverClarification, ResolverError
 
     console.print()
     console.print(f"  [bold]PA pipeline — roadmap[/bold]")
@@ -125,8 +131,6 @@ def intent_test(
     console.print(info(f"success    [dim]{intent.success_definition}[/dim]"))
     for k, v in (intent.extracted_inputs or {}).items():
         console.print(info(f"input      [dim]{k}: {v}[/dim]"))
-    if intent.capability_hints:
-        console.print(info(f"hints      [dim]{', '.join(intent.capability_hints)}[/dim]"))
     for c in intent.constraints:
         console.print(info(f"constraint [dim][{c.type}] {c.value}[/dim]"))
 
@@ -271,8 +275,6 @@ def _print_plan(plan) -> None:
             console.print(info("depends_on  [dim]none (root)[/dim]"))
         for k, v in (s.params_template or {}).items():
             console.print(info(f"param [{k}]  [dim]{v}[/dim]"))
-        if s.is_optional:
-            console.print(info("[dim]optional[/dim]"))
         console.print(divider())
 
 
