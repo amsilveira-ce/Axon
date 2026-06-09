@@ -12,7 +12,8 @@ src/axon/pa/skills/domains/
 tests/
 # C extensions
 *.so
-
+.claude 
+pocs/
 # dentro de pocs/ — não versionar
 pocs/**/__pycache__/
 pocs/**/*.pyc
