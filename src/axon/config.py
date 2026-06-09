@@ -398,8 +398,9 @@ class PAConfig(BaseModel):
 
     port: int = 4100
     default_reasoning: str = "rewoo"
+    max_clarification_question: int = 2
     max_plan_subtasks: int = 5 
-    
+
     gateways: list[ConnectedGateway] = Field(default_factory=list)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)

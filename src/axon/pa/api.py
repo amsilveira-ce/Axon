@@ -54,6 +54,15 @@ async def startup() -> None:
         raise
 
 
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    global _agent
+    if _agent is not None:
+        _agent.close()
+        _agent = None
+        logger.info("[PA API] stopped")
+
+
 def _get_agent() -> PrincipalAgent:
     if _agent is None:
         raise HTTPException(status_code=503, detail="Agent not initialized")

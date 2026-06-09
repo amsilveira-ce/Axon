@@ -70,7 +70,6 @@ BLOCK 2 — Structured output
     {"value": "<constraint>", "type": "<temporal|size|policy|format>", "implicit": false, "source": "<phrase from query>"}
   ],
   "success_definition": "<verifiable condition that means the task is complete>",
-  "capability_hints": ["<capability_tag>"],
   "extracted_inputs": {"<slot>": "<value explicitly stated in query>"},
   "assumptions": ["<sensible default you applied to proceed — never a fabricated fact>"],
   "clarification": null
@@ -247,7 +246,6 @@ class IntentExtractor:
                 goal=data.get("goal", ""),
                 constraints=constraints,
                 success_definition=data.get("success_definition", ""),
-                capability_hints=data.get("capability_hints", []),
                 extracted_inputs=data.get("extracted_inputs", {}),
                 assumptions=data.get("assumptions", []),
                 clarification=clarification,
@@ -322,7 +320,6 @@ def _fallback_objective(query: str) -> Objective:
         goal="",
         constraints=[],
         success_definition="",
-        capability_hints=[],
         extracted_inputs={},
         assumptions=[],
         clarification=ClarificationNeeded(
@@ -370,8 +367,6 @@ def _run_tests(
                 print("STATUS: ✓ READY → Decomposer")
                 print(f"  goal         : {obj.goal}")
                 print(f"  success      : {obj.success_definition}")
-                if obj.capability_hints:
-                    print(f"  capabilities : {', '.join(obj.capability_hints)}")
                 if obj.extracted_inputs:
                     for k, v in obj.extracted_inputs.items():
                         print(f"  input [{k}]  : {v}")

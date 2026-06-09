@@ -58,17 +58,26 @@ def add_days(date_str: str, days: int) -> str:
     return result.strftime("%Y-%m-%d")
 
 
-def days_between(date_a: str, date_b: str) -> int:
+def days_between(date_a: "str | dict", date_b: "str | dict") -> int:
     """
     Calcula a diferença em dias entre duas datas.
 
     Args:
-        date_a: data inicial em YYYY-MM-DD
-        date_b: data final em YYYY-MM-DD
+        date_a: data inicial — YYYY-MM-DD, "today", ou dict com campo "date" ou "iso"
+                (aceita o retorno direto de current_datetime())
+        date_b: data final — mesmos formatos
 
     Returns:
         int — número de dias (positivo se date_b > date_a)
     """
-    a = datetime.fromisoformat(date_a)
-    b = datetime.fromisoformat(date_b)
-    return (b - a).days
+    def _parse(d: "str | dict") -> datetime:
+        if isinstance(d, dict):
+            raw = d.get("date") or d.get("iso", "")
+            return datetime.fromisoformat(raw)
+        if isinstance(d, str) and d.lower() == "today":
+            return datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+        return datetime.fromisoformat(d)
+
+    return (_parse(date_b) - _parse(date_a)).days

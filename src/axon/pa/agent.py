@@ -1,9 +1,25 @@
+"""Principal Agent — orchestrator for the Axon pipeline.
+
+``PrincipalAgent`` coordinates a six-stage pipeline that turns a raw user
+query into a grounded, executable response:
+
+    1. IntentExtractor      — query → Objective
+    2. Decomposer           — Objective → Plan (subtasks)
+    3. Planner              — Plan → validated, dependency-ordered Plan
+    4. Resolver             — Plan + Gateway Agents → resource assignments
+    5. Executor             — resource assignments → Facts + Failures
+    6. ResponseSynthesizer  — Facts → natural-language response
+
+The agent operates entirely in English.  Language translation is the
+caller's responsibility (see ``axon.cli.pa.run`` and ``axon.pa.api``).
+"""
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-from axon.config import PAConfig
+from axon.config import AxonPaths, PAConfig
 from axon.llms.ollama_client import OllamaClient
 from axon.pa.context.conversation import ConversationHistory
 from axon.pa.context.memory import MemoryBank
@@ -12,7 +28,14 @@ from axon.pa.ga_affinity import GAAffinityStore
 from axon.pa.planner import Planner, PlanError
 from axon.pa.intent_extractor import ExtractionTrace, IntentExtractor
 from axon.pa.local_pool import LocalResourcePool
-from axon.pa.models import AgentState, ClarificationNeeded, Objective, Plan
+from axon.pa.local_mcp_session import LocalMCPSession, LocalMCPSessionError
+from axon.pa.models import (
+    AgentState,
+    ClarificationNeeded,
+    Objective,
+    Plan,
+    SubtaskStatus,
+)
 from axon.pa.resolver import Resolver, ResolverClarification, ResolverError
 from axon.pa.resource_cache import ResourceCache
 from axon.pa.executor import Executor, _short
@@ -23,101 +46,102 @@ logger = logging.getLogger(__name__)
 
 
 class PrincipalAgent:
-    """
-    Orquestrador central do Axon.
+    """Orchestrator for the Axon Principal Agent pipeline.
 
-    Coordena o ciclo completo:
-      1. IntentExtractor  — query → Objective              ✦ ativo
-      2. Decomposer       — Objective → Plan (ReWOO)       ✦ ativo
-      3. Resolver         — Plan + GatewayAgents → resource_pool
-      4. Executor         — Plan + resource_pool → Facts + Failures
+    Coordinates a six-stage pipeline from raw user query to natural-language
+    response.  All stages communicate through a shared ``AgentState`` object
+    created at the start of each ``run()`` call.
 
-    Opera inteiramente em inglês.
-    Tradução de/para o idioma do usuário acontece em pa/api.py.
+    The resource pool for each run is assembled from three sources:
+    ``LocalResourcePool`` (local MCP tools), ``ResourceCache`` (GA resources
+    discovered in previous runs), and the ``Resolver`` (newly discovered
+    resources in this run).
 
-    Resource pool por run:
-      LocalResourcePool  → tools locais (MCP stdio, pa_direct)
-      ResourceCache      → recursos GA descobertos em runs anteriores
-      Resolver           → recursos novos descobertos nesta run (adicionados ao state)
+    Attributes:
+        config: PAConfig used for this agent instance.
+        last_trace: ExtractionTrace from the most recent ``run()`` or
+            ``extract_intent()`` call; ``None`` before the first call.
+        last_state: AgentState from the most recent ``run()``; ``None``
+            before the first call or when clarification was returned.
     """
 
     def __init__(
         self,
-        config:       PAConfig,
+        config: PAConfig,
         sessions_dir: Path | None = None,
-        memory_path:  Path | None = None,
-        cache_path:   Path | None = None,
-        session_id:   str | None  = None,
+        memory_path: Path | None = None,
+        cache_path: Path | None = None,
+        session_id: str | None = None,
     ) -> None:
         self.config = config
+        self.last_trace: ExtractionTrace | None = None
+        self.last_state: AgentState | None = None
 
         self._llm_client = OllamaClient(
             host=config.llm.host,
             model=config.llm.model,
             timeout=config.llm.timeout,
         )
-
         self._intent_extractor = IntentExtractor(config)
-        self._decomposer       = Decomposer(config)
-        self._planner          = Planner()
-        self.last_trace: ExtractionTrace | None = None
+        self._decomposer = Decomposer(config)
+        self._planner = Planner()
 
-        # paths
-        self._sessions_dir = sessions_dir or _default_sessions_dir()
-        self._memory_path  = memory_path  or _default_memory_path()
-        self._cache_path   = cache_path   or _default_cache_path()
-        self._traces_dir   = (sessions_dir.parent / "traces") if sessions_dir else _default_traces_dir()
+        # Resolve all filesystem paths from sessions_dir or config defaults.
+        p = _pa_paths(sessions_dir)
+        self._sessions_dir = p.pa_sessions
+        self._traces_dir = p.pa_traces
 
-        # Step 1 — LocalResourcePool (MCP stdio, pa_direct)
-        local_tools_path = (
-            (sessions_dir.parent / "local_tools.json")
-            if sessions_dir else _default_local_tools_path()
-        )
-        self._local_pool = LocalResourcePool.load(local_tools_path)
+        # Local tool pool — loaded from the manifest JSON.
+        self._local_pool = LocalResourcePool.load(p.pa_local_tools)
         logger.info("[PA] local pool — %d tools", len(self._local_pool))
 
-        # Step 2 — ResourceCache (recursos GA de runs anteriores) — LRU por cache.max_size
+        # Single shared stdio MCP connection for all local tools.
+        # Falls back to per-call subprocess when no stdio tools are present.
+        self._local_session: LocalMCPSession | None = None
+        stdio_tools = [m for m in self._local_pool.tools if m.command]
+        if stdio_tools:
+            try:
+                self._local_session = LocalMCPSession(stdio_tools).__enter__()
+                logger.info("[PA] local MCP session connected")
+            except LocalMCPSessionError as exc:
+                logger.warning(
+                    "[PA] local MCP session failed to start (%s) — "
+                    "falling back to per-call subprocess",
+                    exc,
+                )
+
+        # Resource cache — GA manifests discovered in previous runs (LRU).
         self._resource_cache = ResourceCache.load(
-            self._cache_path, max_size=config.cache.max_size
+            cache_path or p.pa_resource_cache, max_size=config.cache.max_size
         )
         logger.info(
             "[PA] resource cache — %d/%d resources",
             len(self._resource_cache), config.cache.max_size,
         )
 
-        # Step 3 — Resolver (discovery via GA + afinidade UCB1 por gateway)
-        affinity_path = (
-            (sessions_dir.parent / "ga_affinity.json")
-            if sessions_dir else _default_affinity_path()
-        )
-        self._affinity = GAAffinityStore.load(affinity_path)
+        # Affinity, Resolver, and Executor share the same object and path.
+        # Exposed as self._affinity so callers can read UCB scores after a run.
+        self._affinity = GAAffinityStore.load(p.pa_ga_affinity)
         self._resolver = Resolver(
             gateways=[g.url for g in config.gateways],
             affinity=self._affinity,
-            affinity_path=affinity_path,
+            affinity_path=p.pa_ga_affinity,
             cache=self._resource_cache,
             policy=config.resource_policy,
             min_match_score=config.resource_policy.match_threshold,
         )
-        logger.info("[PA] resolver — %d gateway(s) configured", len(config.gateways))
-
-        # Step 4 — Executor (executa o plano; fecha o reward UCB via update_final)
-        # Parameterizer re-parametriza via LLM quando os params não batem com o
-        # schema da tool (bind-if-mismatch) — compartilha o LLM client do PA.
         self._executor = Executor(
             affinity=self._affinity,
-            affinity_path=affinity_path,
+            affinity_path=p.pa_ga_affinity,
             parameterizer=Parameterizer(self._llm_client),
+            local_session=self._local_session,
         )
 
-        # Step 5 — ResponseSynthesizer (facts → resposta final; só lê o state)
         self._synthesizer = ResponseSynthesizer(config)
 
-        # MemoryBank
-        self._memory = MemoryBank.load_or_create(self._memory_path)
+        self._memory = MemoryBank.load_or_create(memory_path or p.pa_memory_bank)
         logger.info("[PA] memory — %d entries", len(self._memory.entries))
 
-        # ConversationHistory
         self._history = ConversationHistory.load_or_create(
             session_id=session_id,
             sessions_dir=self._sessions_dir,
@@ -129,16 +153,33 @@ class PrincipalAgent:
             len(self._history.messages),
         )
 
-    # ------------------------------------------------------------------
-    #   API pública
-    # ------------------------------------------------------------------
+
+    # ── lifecycle ─────────────────────────────────────────────────────────────
+
+    def close(self) -> None:
+        """Close the local MCP session (subprocess + event-loop thread)."""
+        if self._local_session is not None:
+            self._local_session.__exit__(None, None, None)
+            self._local_session = None
+            logger.info("[PA] local MCP session closed")
+
+    def __enter__(self) -> "PrincipalAgent":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    # ── public API ────────────────────────────────────────────────────────────
 
     @property
     def session_id(self) -> str:
         return self._history.session_id
 
     def extract_intent(self, query: str) -> Objective:
-        """Extrai intenção. Usado pelo chat — não registra no histórico."""
+        """Extract intent without recording the query in conversation history.
+
+        Used by the interactive chat loop, which manages history separately.
+        """
         intent, trace = self._intent_extractor.extract(
             query,
             history=self._history,
@@ -149,68 +190,55 @@ class PrincipalAgent:
         return intent
 
     def run(self, query: str) -> str:
-        """
-        Ponto de entrada one-shot. Executa o pipeline completo.
+        """Execute the full pipeline for a one-shot query.
 
-        Fluxo atual:
-          1. IntentExtractor → Objective
-          2. AgentState criado e resource_pool populado
-          3. Decomposer → Plan
-          4. Resolver (pendente)
-          5. Executor (pendente)
+        Runs all six stages in sequence, collecting ``Facts`` and ``Failures``
+        in ``AgentState``.  Returns a natural-language response string in all
+        cases, including clarification requests and pipeline errors.
         """
+
         self._history.add_message("user", query, llm_client=self._llm_client)
 
-        # 1. IntentExtractor
+        # Stage 1 — intent extraction
         intent, trace = self._intent_extractor.extract(
             query,
             history=self._history,
             memory=self._memory,
             resources=self._local_pool.get_capabilities(),
         )
+
         self.last_trace = trace
 
         if intent.clarification is not None:
-            response = self._format_clarification(intent.clarification)
-            self._history.add_message("assistant", response, llm_client=self._llm_client)
-            self._persist_session()
-            return response
+            return self._respond_clarification(intent.clarification)
 
-        # Step 3 — cria AgentState e pré-popula resource_pool
-        # session_id atrelado à conversa → traces correlacionáveis por sessão
+        # Initialise AgentState and expose it early so --verbose can read partial state.
         state = AgentState(raw_query=query, objective=intent, session_id=self.session_id)
-        state.resource_pool = (
-            self._local_pool.tools
-            + self._resource_cache.all()
-        )
+        state.resource_pool = self._local_pool.tools + self._resource_cache.all()
+        self.last_state = state
 
         logger.info(
-            "[PA] resource_pool — %d resources (%d local, %d cached)",
+            "[PA] resource pool — %d resources (%d local, %d cached)",
             len(state.resource_pool),
             len(self._local_pool.tools),
             len(self._resource_cache),
         )
 
-        # Step 4 — Decomposer lê state.objective + state.resource_pool
-        #           escreve state.plan
+        # Stage 2 — decompose objective into subtasks
         try:
             self._decomposer.decompose(state)
         except Exception as exc:
-            logger.error("[PA] decomposer raised: %s", exc)
-            response = (
+            logger.error("[PA] decomposer: %s", exc)
+            return self._respond(
                 f"I was unable to decompose your request into steps.\n"
                 f"Reason: {exc}\n\n"
                 f"Please rephrase your query and try again."
             )
-            self._history.add_message("assistant", response, llm_client=self._llm_client)
-            self._persist_session()
-            return response
 
-        # detecta plano fallback — subtask com status FAILED
         if _is_fallback_plan(state.plan):
             reason = state.plan.subtasks[0].description if state.plan.subtasks else "unknown"
             logger.warning("[PA] decomposer returned fallback plan — %s", reason)
-            response = (
+            return self._respond(
                 f"I was unable to break down your request into executable steps.\n\n"
                 f"{reason}\n\n"
                 f"Suggestions:\n"
@@ -218,117 +246,91 @@ class PrincipalAgent:
                 f"  - Break the request into smaller parts\n"
                 f"  - Check if the required capabilities are available (axon pa tools list)"
             )
-            self._history.add_message("assistant", response, llm_client=self._llm_client)
-            self._persist_session()
-            return response
 
-        # Step 5 — Planner lê state.plan.subtasks
-        #           resolve depends_on, valida, ordena
-        #           escreve state.plan + state.progress
+        # Stage 3 — validate and dependency-order the plan
         try:
             self._planner.plan(state)
         except PlanError as exc:
-            logger.error("[PA] planner raised: %s", exc)
-            response = (
+            logger.error("[PA] planner: %s", exc)
+            return self._respond(
                 f"The execution plan is inconsistent and cannot be scheduled.\n"
                 f"Reason: {exc}\n\n"
                 f"Please rephrase your query and try again."
             )
-            self._history.add_message("assistant", response, llm_client=self._llm_client)
-            self._persist_session()
-            return response
 
-        # Step 6 — Resolver: atribui um recurso a cada subtask
-        #           (local pool → Gateway Agent via UCB1)
+        # Stage 4 — resolve capabilities to resources
         try:
             self._resolver.resolve(state)
         except ResolverClarification as clar:
-            # fallback_strategy=ask_user — devolve pergunta ao usuário,
-            # mesmo caminho que o IntentExtractor usa para esclarecimento.
             logger.info("[PA] resolver needs clarification: %s", clar)
-            response = self._format_clarification(clar.clarification)
-            self._history.add_message("assistant", response, llm_client=self._llm_client)
-            self._persist_session()
-            return response
+            return self._respond_clarification(clar.clarification)
         except ResolverError as exc:
-            logger.error("[PA] resolver raised: %s", exc)
-            response = (
-                f"I couldn't find a resource to perform part of your request.\n\n"
-                f"{exc}"
+            logger.error("[PA] resolver: %s", exc)
+            return self._respond(
+                f"I couldn't find a resource to perform part of your request.\n\n{exc}"
             )
-            self._history.add_message("assistant", response, llm_client=self._llm_client)
-            self._persist_session()
-            return response
 
-        # Step 7 — Executor: executa cada subtask resolvida (Fact/Failure + reward)
+        # Stage 5 — execute the plan
         try:
             self._executor.execute(state)
         except Exception as exc:
-            logger.error("[PA] executor raised: %s", exc, exc_info=True)
-            self._persist_trace(state)   # salva o que houver, mesmo parcial
-            response = (
+            logger.error("[PA] executor: %s", exc, exc_info=True)
+            self._persist_trace(state)
+            return self._respond(
                 f"An error interrupted execution of your request.\n\n{exc}"
             )
-            self._history.add_message("assistant", response, llm_client=self._llm_client)
-            self._persist_session()
-            return response
 
         self._persist_trace(state)
 
-        # Step 8 — ResponseSynthesizer: facts + contexto → resposta em linguagem
-        # natural. Fallback para o resumo estruturado se a síntese falhar.
+        # Stage 6 — synthesize natural-language response
         try:
             response = self._synthesizer.synthesize(state, self._history)
             if not response:
                 response = self._format_result(intent, state)
         except Exception as exc:
-            logger.warning("[PA] synthesizer failed (%s) — using structured result", exc)
+            logger.warning("[PA] synthesizer failed (%s) — using structured fallback", exc)
             response = self._format_result(intent, state)
 
-        self._history.add_message("assistant", response, llm_client=self._llm_client)
+        return self._respond(response)
+
+    # ── private helpers ───────────────────────────────────────────────────────
+
+    def _respond(self, message: str) -> str:
+        """Record *message* as an assistant turn, persist the session, and return it."""
+        self._history.add_message("assistant", message, llm_client=self._llm_client)
         self._persist_session()
-        return response
+        return message
 
-    # ------------------------------------------------------------------
-    #   Memory API
-    # ------------------------------------------------------------------
-
-    def memory_set(self, key: str, value: object, source: str = "operator") -> None:
-        self._memory.set(key, value, source=source)
-        self._memory.persist(self._memory_path)
-
-    def memory_get(self, key: str, default: object = None) -> object:
-        return self._memory.get(key, default)
-
-    def memory_delete(self, key: str) -> bool:
-        result = self._memory.delete(key)
-        if result:
-            self._memory.persist(self._memory_path)
-        return result
-
-    def memory_summary(self) -> str:
-        return self._memory.get_summary()
-
-    # ------------------------------------------------------------------
-    #   Internals
-    # ------------------------------------------------------------------
+    def _respond_clarification(self, clarification: ClarificationNeeded) -> str:
+        return self._respond(self._format_clarification(clarification))
 
     def _persist_session(self) -> None:
         try:
             self._history.persist(self._sessions_dir)
-        except Exception as e:
-            logger.warning("[PA] failed to persist session: %s", e)
+        except Exception as exc:
+            logger.warning("[PA] failed to persist session: %s", exc)
 
-    def _format_clarification(self, intent: ClarificationNeeded) -> str:
-        lines = [intent.context, ""]
-        for i, q in enumerate(intent.questions, 1):
+    def _persist_trace(self, state: AgentState) -> None:
+        """Write AgentState to ``{traces}/{session_id}/{request_id}.json``."""
+        try:
+            trace_dir = self._traces_dir / state.session_id
+            trace_dir.mkdir(parents=True, exist_ok=True)
+            path = trace_dir / f"{state.request_id}.json"
+            path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+            logger.info("[PA] trace saved → %s", path)
+        except Exception as exc:
+            logger.warning("[PA] failed to persist trace: %s", exc)
+
+    def _format_clarification(self, clarification: ClarificationNeeded) -> str:
+        lines = [clarification.context, ""]
+        for i, q in enumerate(clarification.questions, 1):
             lines.append(f"{i}. {q.question}")
             if q.options:
                 lines.append(f"   options: {', '.join(q.options)}")
         return "\n".join(lines)
 
     def _format_objective(self, intent: Objective) -> str:
-        """Formata só o Objective — usado pelo chat.py."""
+        """Format an Objective for display — used by the interactive chat loop."""
         lines = [
             f"goal: {intent.goal}",
             f"success: {intent.success_definition}",
@@ -338,7 +340,7 @@ class PrincipalAgent:
         return "\n".join(lines)
 
     def _format_result(self, intent: Objective, state: AgentState) -> str:
-        """Formata o resultado da run executada — usado pelo run()."""
+        """Format the structured run result — fallback when synthesis fails."""
         plan = state.plan
         lines = [
             f"goal: {intent.goal}",
@@ -348,8 +350,9 @@ class PrincipalAgent:
         ]
         for s in plan.subtasks:
             status = state.progress.get(s.id)
-            status_label = status.value if status else "pending"
-            lines.append(f"  [{s.id}] {s.description}  [{status_label}]")
+            lines.append(
+                f"  [{s.id}] {s.description}  [{status.value if status else 'pending'}]"
+            )
             lines.append(f"    capability : {s.capability_required}")
 
             assignment = state.resource_assignments.get(s.id)
@@ -375,29 +378,14 @@ class PrincipalAgent:
         ])
         return "\n".join(lines)
 
-    def _persist_trace(self, state: AgentState) -> None:
-        """Salva o AgentState em {traces}/{session_id}/{request_id}.json."""
-        try:
-            trace_dir = self._traces_dir / state.session_id
-            trace_dir.mkdir(parents=True, exist_ok=True)
-            path = trace_dir / f"{state.request_id}.json"
-            path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
-            logger.info("[PA] trace saved → %s", path)
-        except Exception as e:
-            logger.warning("[PA] failed to persist trace: %s", e)
-
 
 # ---------------------------------------------------------------------------
-#   Plan helpers
+# Module-level helpers
 # ---------------------------------------------------------------------------
 
-def _is_fallback_plan(plan: "Plan") -> bool:
-    """
-    Detecta se o Decomposer retornou um plano fallback.
-    Planos fallback têm exactamente 1 subtask com id="subtask-fallback"
-    e status=FAILED.
-    """
-    from axon.pa.models import SubtaskStatus
+
+def _is_fallback_plan(plan: Plan) -> bool:
+    """Return ``True`` if the Decomposer returned a single-subtask error plan."""
     return (
         len(plan.subtasks) == 1
         and plan.subtasks[0].id == "subtask-fallback"
@@ -405,53 +393,17 @@ def _is_fallback_plan(plan: "Plan") -> bool:
     )
 
 
-# ---------------------------------------------------------------------------
-#   Path helpers
-# ---------------------------------------------------------------------------
+def _pa_paths(sessions_dir: Path | None) -> AxonPaths:
+    """Return ``AxonPaths`` derived from *sessions_dir* or the config file.
 
-def _default_sessions_dir() -> Path:
+    When *sessions_dir* is provided the root is inferred as
+    ``sessions_dir.parent.parent`` (i.e. ``.axon/pa/sessions`` → ``.axon``).
+    Falls back to ``.axon`` when the config file is not found.
+    """
+    if sessions_dir is not None:
+        return AxonPaths(sessions_dir.parent.parent)
     try:
         from axon.config import paths
-        return paths().pa_sessions
+        return paths()
     except Exception:
-        return Path(".axon/pa/sessions")
-
-
-def _default_memory_path() -> Path:
-    try:
-        from axon.config import paths
-        return paths().pa_memory_bank
-    except Exception:
-        return Path(".axon/pa/memory_bank.json")
-
-
-def _default_cache_path() -> Path:
-    try:
-        from axon.config import paths
-        return paths().pa_resource_cache
-    except Exception:
-        return Path(".axon/pa/resource_cache.json")
-
-
-def _default_local_tools_path() -> Path:
-    try:
-        from axon.config import paths
-        return paths().pa_local_tools
-    except Exception:
-        return Path(".axon/pa/local_tools.json")
-
-
-def _default_affinity_path() -> Path:
-    try:
-        from axon.config import paths
-        return paths().pa_ga_affinity
-    except Exception:
-        return Path(".axon/pa/ga_affinity.json")
-
-
-def _default_traces_dir() -> Path:
-    try:
-        from axon.config import paths
-        return paths().pa_traces
-    except Exception:
-        return Path(".axon/pa/traces")
+        return AxonPaths(Path(".axon"))

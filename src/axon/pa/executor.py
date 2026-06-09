@@ -72,15 +72,18 @@ class Executor:
 
     def __init__(
         self,
-        affinity:      GAAffinityStore | None  = None,
-        affinity_path: Path | None             = None,
-        pa_id:         str | None              = None,
-        parameterizer: "Parameterizer | None" = None,
+        affinity:       GAAffinityStore | None  = None,
+        affinity_path:  Path | None             = None,
+        pa_id:          str | None              = None,
+        parameterizer:  "Parameterizer | None"  = None,
+        local_session:  "Any | None"            = None,
     ) -> None:
         self._affinity      = affinity   # Step 8 — update_final
         self._affinity_path = affinity_path
         self._pa_id         = pa_id
         self._parameterizer = parameterizer   # late-binding de params (bind-if-mismatch)
+        # shared session para tools locais — evita spawn por subtask
+        self._local_session = local_session
 
     # ------------------------------------------------------------------
     #   Loop principal
@@ -386,15 +389,24 @@ class Executor:
             logger.warning("[Executor] subtask=%s FAILED — all %d candidate(s) exhausted",
                            subtask.id, len(candidates))
 
+        # Update local-pool manifest counters so _find_in_pool can rank by history.
+        # GA resources use update_final instead (Step 8 below).
+        if not assignment.ga_url:
+            if succeeded:
+                assignment.manifest.success_count += 1
+            else:
+                assignment.manifest.failure_count += 1
+
         self._close_reward(assignment, success=succeeded)   # Step 8
 
     def _call_resource(self, manifest: "ResourceManifest", params: dict[str, Any], task: str) -> Any:
         """
         Step 5 — escolhe o cliente pelo callable_by/tipo:
 
-          ga_proxy            → GAClient.invoke (GA roda a tool MCP stdio)
-          pa_direct + agent   → A2AClient.call  (agente A2A)
-          pa_direct + mcp     → MCPClient       (MCP HTTP/SSE — PA chama direto)
+          ga_proxy                    → GAClient.invoke (GA roda a tool MCP stdio)
+          pa_direct + agent           → A2AClient.call  (agente A2A)
+          pa_direct + mcp (local)     → LocalMCPSession  (client compartilhado, zero spawn)
+          pa_direct + mcp (remoto)    → MCPClient        (MCP HTTP/SSE — PA chama direto)
         """
         if manifest.callable_by == "ga_proxy":
             from axon.pa.clients.ga_client import GAClient
@@ -413,7 +425,45 @@ class Executor:
             # ainda não são mapeados para a chamada (próximo incremento).
             return asyncio.run(A2AClient().call(manifest, task=task))
 
+        # tools locais: usa a session compartilhada se disponível (zero subprocess spawn)
+        if self._local_session is not None and self._local_session.owns(manifest):
+            return self._call_mcp_via_session(manifest, params, task)
+
         return asyncio.run(self._call_mcp(manifest, params, task))
+
+    def _call_mcp_via_session(
+        self, manifest: "ResourceManifest", params: dict[str, Any], task: str
+    ) -> Any:
+        """
+        MCP local — usa o client compartilhado da LocalMCPSession.
+
+        Sem spawn de subprocess. Seleção de tool e parametrização idêntica
+        ao _call_mcp, mas a chamada vai direto ao Client já conectado.
+        """
+        from axon.pa.clients.mcp_client import MCPClientError
+        from axon.pa.parameterizer import conforms
+
+        schemas = self._local_session.tool_schemas()
+        tool    = _select_tool(manifest, list(schemas))
+        if tool is None:
+            raise MCPClientError(
+                f"could not pick a tool for '{manifest.name}' among {list(schemas)} — "
+                f"neither the resource name nor its capabilities "
+                f"{manifest.capability_tags} match a tool name"
+            )
+
+        schema = schemas[tool]
+        args   = params
+        if self._parameterizer is not None and not conforms(params, schema):
+            logger.info(
+                "[Executor] params %s don't fit '%s' schema — re-parametrizing via LLM",
+                sorted(params), tool,
+            )
+            args = self._parameterizer.bind(
+                tool_name=tool, input_schema=schema, intent=task, available=params,
+            )
+
+        return self._local_session.call_tool_sync(tool, args)
 
     async def _call_mcp(self, manifest: "ResourceManifest", params: dict[str, Any], task: str) -> Any:
         """

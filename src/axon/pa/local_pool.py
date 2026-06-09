@@ -1,29 +1,37 @@
-"""
-pa/local_pool.py — LocalResourcePool
+"""Local resource pool for the Principal Agent.
 
-Tools MCP locais do PA — chamadas diretamente via MCPClient
-sem passar pelo Gateway Agent.
+``LocalResourcePool`` exposes tools defined in ``local_tools.json`` as
+``ResourceManifest`` objects so the Resolver and Executor can treat them
+the same as Gateway Agent resources.
 
-Lê de .axon/pa/local_tools.json e constrói ResourceManifest
-com todos os campos necessários para execução:
-  type:             ResourceType.mcp
-  protocol_binding: ProtocolBinding.MCP_STDIO
-  callable_by:      "pa_direct"
-  command:          [...] do local_tools.json
+Tools are loaded once at startup — no LRU, no expiry, no Gateway Agent
+involvement.  Each enabled tool becomes a manifest with:
+
+- ``type``: ``ResourceType.mcp``
+- ``protocol_binding``: ``MCP_STDIO`` or ``MCP_HTTP`` (from ``transport``)
+- ``callable_by``: ``"pa_direct"``
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from axon.types import ProtocolBinding, ResourceManifest, ResourceType
 
+logger = logging.getLogger(__name__)
+
 
 class LocalResourcePool:
-    """
-    Pool de tools locais do PA.
-    Carregado no startup — sem LRU, sem expiração, sem GA.
+    """Pool of local MCP tools available to the Principal Agent.
+
+    Loaded from ``local_tools.json`` at startup.  Each enabled entry becomes
+    a ``ResourceManifest`` that the Resolver can assign to a subtask and the
+    Executor can call directly without going through a Gateway Agent.
+
+    Attributes:
+        tools: Immutable snapshot of all loaded manifests.
     """
 
     def __init__(self, tools: list[ResourceManifest]) -> None:
@@ -31,14 +39,15 @@ class LocalResourcePool:
 
     @classmethod
     def load(cls, path: Path) -> "LocalResourcePool":
-        """
-        Carrega tools do local_tools.json.
-        Constrói ResourceManifest com type, protocol_binding e command corretos.
+        """Load tools from *path* and return a new pool.
+
+        Silently skips disabled entries and malformed tool definitions.
+        Returns an empty pool when the file does not exist.
         """
         if not path.exists():
             return cls(tools=[])
 
-        data  = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
         tools = []
 
         for t in data.get("tools", []):
@@ -46,7 +55,7 @@ class LocalResourcePool:
                 continue
 
             transport = t.get("transport", "stdio")
-            binding   = (
+            binding = (
                 ProtocolBinding.MCP_STDIO if transport == "stdio"
                 else ProtocolBinding.MCP_HTTP
             )
@@ -64,11 +73,8 @@ class LocalResourcePool:
                     endpoint=t.get("endpoint"),
                     tool=t.get("tool"),
                 ))
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "[LocalResourcePool] skipping tool '%s': %s", t.get("name"), e
-                )
+            except Exception as exc:
+                logger.warning("[LocalPool] skipping tool '%s': %s", t.get("name"), exc)
 
         return cls(tools=tools)
 
@@ -77,16 +83,17 @@ class LocalResourcePool:
         return list(self._tools)
 
     def get_capabilities(self) -> list[str]:
-        seen:   set[str]  = set()
-        result: list[str] = []
-        for tool in self._tools:
-            for tag in tool.capability_tags:
-                if tag not in seen:
-                    seen.add(tag)
-                    result.append(tag)
-        return result
+        """Return a deduplicated, insertion-ordered list of all capability tags."""
+        tags = [tag for tool in self._tools for tag in tool.capability_tags]
+        return list(dict.fromkeys(tags))
 
-    def get(self, *, capability: str | None = None, name: str | None = None) -> ResourceManifest | None:
+    def get(
+        self,
+        *,
+        capability: str | None = None,
+        name: str | None = None,
+    ) -> ResourceManifest | None:
+        """Return the first tool matching *name* or *capability*, or ``None``."""
         for tool in self._tools:
             if name and tool.name == name:
                 return tool

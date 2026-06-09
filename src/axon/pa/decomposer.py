@@ -12,8 +12,10 @@ ReWOO — todo o plano é construído antes de qualquer execução.
   O Executor apenas executa — sem raciocinar sobre dependências.
 
 Separação de responsabilidades:
-  pa/skills/decomposer.md  → BEHAVIOR (operador edita)
-  decomposer.py            → OUTPUT_CONTRACT + lógica de parse + capability matching
+  pa/skills/decomposer.md  → prompt template completo (operador edita)
+                             placeholders: {memory} {resources} {goal}
+                             {success_definition} {constraints_block} {inputs_block}
+  decomposer.py            → preenche o template + parse + capability matching
 """
 
 from __future__ import annotations
@@ -22,8 +24,6 @@ import json
 import logging
 import re
 from pathlib import Path
-from uuid import uuid4
-
 from pydantic import ValidationError
 
 from axon.config import PAConfig, LLMConfig
@@ -39,90 +39,13 @@ from axon.types import ResourceManifest
 
 logger = logging.getLogger(__name__)
 
-# ── Skill ─────────────────────────────────────────────────────────────────────
+# ── Skill template ────────────────────────────────────────────────────────────
 
 _SKILL_PATH = Path(__file__).parent / "skills" / "decomposer.md"
 
 
-def _load_behavior() -> str:
+def _load_template() -> str:
     return _SKILL_PATH.read_text(encoding="utf-8").strip()
-
-
-# ── Output contract — hardcoded ───────────────────────────────────────────────
-
-_OUTPUT_CONTRACT = """
----
-
-Always produce exactly two blocks:
-
-BLOCK 1 — Reasoning
-<think>
-Step-by-step reasoning about the decomposition.
-</think>
-
-BLOCK 2 — Subtask list
-<output>
-[
-  {
-    "id": "subtask-<n>",
-    "description": "<what this subtask does>",
-    "capability_required": "<exact capability tag from Available Resources, or natural language if not available>",
-    "input_artifacts": ["<artifact_name_from_previous_subtask>"],
-    "output_artifact": "<short_descriptive_name>",
-    "params_template": {
-      "<param_name>": "<concrete value or {{artifact:output_artifact_name}}>"
-    },
-    "depends_on": ["<subtask-id-whose-output-is-referenced>"],
-    "is_optional": false
-  }
-]
-</output>
-
-Output rules (enforced by parser — do not change):
-- Always produce both <think> and <output> blocks.
-- params_template must be fully specified. No vague values like "previous output".
-  Use {{artifact:name}} to reference a previous subtask's output_artifact.
-- depends_on must list exactly the subtask ids referenced via {{artifact:name}} in params_template.
-- output_artifact must be unique within the plan and follow snake_case.
-- The first subtask has no input_artifacts and no depends_on.
-- capability_required: copy an EXACT tag from "Available capability tags" when a resource
-  fits the subtask. Use the capability TAG, never the resource's display name
-  (e.g. use "calculation", not "calculator"). If no tag fits, use a short descriptive
-  tag — the Resolver will query the GA.
-- is_optional: true only when the subtask genuinely does not affect the main result.
-""".strip()
-
-
-# ── Context template — hardcoded ──────────────────────────────────────────────
-
-_CONTEXT_TEMPLATE = """
---- Objective ---
-goal: {goal}
-success: {success_definition}
-{constraints_block}
-{inputs_block}
-
---- Available Resources ---
-{resources}
-
---- User Memory ---
-{memory}
-
---- Instructions ---
-Decompose the objective into a minimal list of subtasks following ReWOO strategy.
-Build the complete execution plan upfront — params_template must be fully specified.
-""".strip()
-
-
-def _build_prompt(behavior: str) -> str:
-    return f"{behavior}\n\n{_OUTPUT_CONTRACT}"
-
-
-def _subtask_schema() -> dict:
-    from pydantic import RootModel
-    class SubtaskList(RootModel[list[Subtask]]):
-        pass
-    return SubtaskList.model_json_schema()
 
 
 # ── Context builder ───────────────────────────────────────────────────────────
@@ -132,6 +55,7 @@ def _build_context(
     resource_pool: list[ResourceManifest],
     memory:        str = "No user memory available.",
 ) -> str:
+    
     constraints_block = ""
     if objective.constraints:
         lines = [f"- [{c.type}] {c.value}" for c in objective.constraints]
@@ -157,7 +81,7 @@ def _build_context(
     else:
         resources = "No resources available in local pool — Resolver will query the GA."
 
-    return _CONTEXT_TEMPLATE.format(
+    return _load_template().format(
         goal=objective.goal,
         success_definition=objective.success_definition,
         constraints_block=constraints_block,
@@ -230,10 +154,6 @@ class Decomposer:
             model=config.llm.model,
             timeout=config.llm.timeout,
         )
-        behavior      = _load_behavior()
-        self._system  = _build_prompt(behavior)
-        self._schema  = _subtask_schema()
-
         logger.debug("[Decomposer] initialized — model=%s", config.llm.model)
 
     def decompose(self, state: "AgentState") -> None:  # type: ignore[name-defined]
@@ -276,7 +196,7 @@ class Decomposer:
         try:
             raw = self._client.generate(
                 context,
-                system=self._system,
+                system=None,
                 temperature=0.0,
                 format=None,    # schema livre — parser cascade cuida do resto
                 think=True,     # raciocínio livre melhora depends_on e params
@@ -513,14 +433,12 @@ def _run_tests(
         Objective(
             goal="search patient João data in HStory and generate a clinical report",
             success_definition="A clinical report with patient data is delivered",
-            capability_hints=["patient_data_retrieval", "clinical_analysis", "report_generation"],
             extracted_inputs={"patient_name": "João"},
         ),
         Objective(
             goal="analyze Q3 sales data from the uploaded CSV and generate a PDF report with charts",
             success_definition="PDF report with Q3 analysis and charts is ready",
             constraints=[Constraint(value="PDF format", type="format", source="query")],
-            capability_hints=["file_reading", "data_analysis", "report_generation"],
             extracted_inputs={"file": "q3_sales.csv", "format": "PDF"},
         ),
     ]
