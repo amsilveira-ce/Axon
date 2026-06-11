@@ -1,0 +1,33 @@
+{
+  "name": "finance-oracle",
+  "description": "Financial intelligence tool for market analysis, risk assessment and portfolio management. Provides real-time market data, financial statement analysis, credit scoring and macroeconomic indicators. Covers B3, NYSE, NASDAQ and global markets.",
+  "transport": "http",
+  "endpoint": "http://localhost:8042",
+  "auth_scheme": "api_key",
+  "auth_env_var": "AXON_SECRET_FINANCE_ORACLE",
+  "is_paid": true,
+  "cost_per_call": 0.002,
+  "tags": [
+    "finance", "market", "stocks", "portfolio", "investment",
+    "risk", "credit", "macroeconomics", "b3", "nasdaq",
+    "trading", "valuation", "balance-sheet", "revenue",
+    "interest-rate", "forex", "commodity", "financial-data"
+  ],
+  "tools": [
+    {
+      "name": "get_market_data",
+      "description": "Returns real-time or historical price, volume and volatility data for stocks, ETFs, bonds and commodities by ticker symbol.",
+      "tags": ["market", "price", "ticker", "stock", "etf", "historical", "volume"]
+    },
+    {
+      "name": "analyze_financials",
+      "description": "Analyzes a company's financial statements returning profitability ratios, liquidity indicators, leverage metrics and valuation multiples.",
+      "tags": ["financials", "balance-sheet", "income-statement", "ratio", "valuation", "analysis"]
+    },
+    {
+      "name": "assess_credit_risk",
+      "description": "Evaluates credit risk for a company or individual based on financial history and macroeconomic context. Returns probability of default and recommended credit limit.",
+      "tags": ["credit", "risk", "default", "credit-score", "lending", "probability"]
+    }
+  ]
+}

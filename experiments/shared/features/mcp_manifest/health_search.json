@@ -1,0 +1,33 @@
+{
+  "name": "health-search",
+  "description": "Searches and retrieves patient clinical records from the Einstein Hospital EHR system (HStory). Returns structured patient data including conditions, active medications, recent visits and responsible physician.",
+  "transport": "stdio",
+  "command": ["python", "-m", "einstein_mcp.server"],
+  "endpoint": null,
+  "auth_scheme": "none",
+  "auth_env_var": null,
+  "is_paid": false,
+  "cost_per_call": null,
+  "tags": [
+    "health", "patient", "ehr", "clinical", "records",
+    "medical-history", "medications", "conditions",
+    "hospital", "einstein", "hstory", "prontuario"
+  ],
+  "tools": [
+    {
+      "name": "search_patient",
+      "description": "Searches for a patient by name and returns their full clinical profile including conditions, medications and responsible physician.",
+      "tags": ["patient", "search", "lookup", "name", "clinical-profile"]
+    },
+    {
+      "name": "get_medical_history",
+      "description": "Returns the complete medical history for a patient ID including past diagnoses, procedures, hospitalizations and lab results.",
+      "tags": ["history", "diagnoses", "procedures", "labs", "patient-id"]
+    },
+    {
+      "name": "get_prescriptions",
+      "description": "Returns active prescriptions for a patient including drug name, dosage, frequency and prescribing physician.",
+      "tags": ["prescriptions", "medications", "drugs", "dosage", "active"]
+    }
+  ]
+}

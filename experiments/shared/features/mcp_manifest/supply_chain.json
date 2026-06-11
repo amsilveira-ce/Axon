@@ -1,0 +1,34 @@
+{
+  "name": "supply-chain-tracker",
+  "description": "Global supply chain intelligence tool. Tracks shipments, monitors inventory levels, assesses supplier risk and optimizes logistics routes. Integrates with major freight carriers, port authorities and customs databases across 50+ countries.",
+  "transport": "stdio",
+  "command": ["python", "-m", "supply_chain_mcp.server"],
+  "endpoint": null,
+  "auth_scheme": "none",
+  "auth_env_var": null,
+  "is_paid": false,
+  "cost_per_call": null,
+  "tags": [
+    "supply-chain", "logistics", "shipping", "freight", "inventory",
+    "warehouse", "delivery", "tracking", "customs", "import",
+    "export", "supplier", "procurement", "cargo", "port",
+    "last-mile", "distribution", "stock", "fulfillment"
+  ],
+  "tools": [
+    {
+      "name": "track_shipment",
+      "description": "Tracks a shipment by bill of lading, container ID or tracking number across sea, air and road freight. Returns current location, estimated arrival and delay risk.",
+      "tags": ["tracking", "shipment", "container", "bill-of-lading", "eta", "freight"]
+    },
+    {
+      "name": "check_inventory",
+      "description": "Returns current inventory levels for a SKU or product category across warehouses and distribution centers. Includes reorder point alerts and stockout risk.",
+      "tags": ["inventory", "stock", "sku", "warehouse", "stockout", "reorder"]
+    },
+    {
+      "name": "assess_supplier_risk",
+      "description": "Evaluates supply chain risk for a supplier or sourcing region based on geopolitical factors, financial stability, delivery history and ESG compliance.",
+      "tags": ["supplier", "risk", "procurement", "geopolitical", "sourcing", "esg-supply"]
+    }
+  ]
+}

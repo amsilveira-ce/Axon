@@ -1,0 +1,33 @@
+{
+  "name": "legal-compass",
+  "description": "Legal intelligence tool for Brazilian and international legislation. Searches federal laws, regulatory norms, administrative acts and court precedents. Covers LGPD compliance, labor law, tax regulation and constitutional provisions.",
+  "transport": "http",
+  "endpoint": "http://localhost:8040",
+  "auth_scheme": "none",
+  "auth_env_var": null,
+  "is_paid": false,
+  "cost_per_call": null,
+  "tags": [
+    "law", "legislation", "legal", "regulation", "compliance",
+    "lgpd", "gdpr", "labor-law", "tax", "constitution",
+    "court", "precedent", "normative", "government", "statute",
+    "juridical", "regulatory", "legal-text", "brazil"
+  ],
+  "tools": [
+    {
+      "name": "search_legislation",
+      "description": "Searches Brazilian federal legislation by keyword, law number or subject. Returns law text, publication date, scope and current status (active, revoked, amended).",
+      "tags": ["legislation", "federal-law", "statute", "search", "brazil"]
+    },
+    {
+      "name": "check_compliance",
+      "description": "Evaluates whether a described business practice or data processing activity complies with LGPD, GDPR or sector-specific regulations. Returns compliance status and required corrective actions.",
+      "tags": ["compliance", "lgpd", "gdpr", "privacy", "data-protection", "audit"]
+    },
+    {
+      "name": "get_court_precedents",
+      "description": "Retrieves relevant court decisions and precedents from STF, STJ and TRFs for a given legal topic or case description.",
+      "tags": ["court", "precedent", "jurisprudence", "stf", "stj", "ruling", "decision"]
+    }
+  ]
+}

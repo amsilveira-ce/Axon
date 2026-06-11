@@ -1,0 +1,46 @@
+{
+  "name": "medical-mcp",
+  "description": "Medical reference tool providing drug information, interaction checking and clinical literature search. Queries authoritative public sources including FDA drug database, RxNorm nomenclature and PubMed medical literature. No patient data involved.",
+  "transport": "http",
+  "endpoint": "http://localhost:8030",
+  "auth_scheme": "none",
+  "auth_env_var": null,
+  "is_paid": false,
+  "cost_per_call": null,
+  "tags": [
+    "drugs", "medications", "interactions", "fda",
+    "pubmed", "rxnorm", "medical-reference", "clinical",
+    "pharmacology", "side-effects", "contraindications"
+  ],
+  "tools": [
+    {
+      "name": "search_drugs",
+      "description": "Searches the FDA drug database by name, active ingredient or condition. Returns drug details including approved uses, contraindications and manufacturer.",
+      "tags": ["fda", "drugs", "search", "active-ingredient", "approved-uses"]
+    },
+    {
+      "name": "check_interactions",
+      "description": "Checks for known interactions between two or more drugs using RxNorm. Returns severity classification and clinical recommendation for each interaction found.",
+      "tags": [
+        "interactions", "drug-interactions", "rxnorm",
+        "severity", "contraindications", "safety", "polypharmacy"
+      ]
+    },
+    {
+      "name": "get_drug_details",
+      "description": "Returns detailed information for a drug by NDC code or RxNorm identifier including mechanism of action, dosage forms, side effects and black box warnings.",
+      "tags": [
+        "drug-details", "ndc", "mechanism", "side-effects",
+        "black-box", "dosage", "warnings"
+      ]
+    },
+    {
+      "name": "search_literature",
+      "description": "Searches PubMed for peer-reviewed clinical literature by keyword, condition or drug name. Returns abstracts and DOI links.",
+      "tags": [
+        "pubmed", "literature", "research", "abstracts",
+        "clinical-evidence", "studies", "peer-reviewed"
+      ]
+    }
+  ]
+}

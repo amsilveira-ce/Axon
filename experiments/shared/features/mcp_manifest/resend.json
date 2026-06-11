@@ -1,0 +1,25 @@
+{
+  "name": "resend",
+  "description": "Transactional email delivery tool via Resend API. Sends formatted emails with support for plain text and HTML content. Used for clinical summaries, patient notifications and physician communications.",
+  "transport": "http",
+  "endpoint": "https://mcp.resend.com",
+  "auth_scheme": "api_key",
+  "auth_env_var": "AXON_SECRET_RESEND",
+  "is_paid": false,
+  "cost_per_call": null,
+  "tags": [
+    "email", "send-email", "notification", "transactional",
+    "resend", "delivery", "message", "communicate",
+    "physician", "patient-notification"
+  ],
+  "tools": [
+    {
+      "name": "send_email",
+      "description": "Sends a transactional email to a single recipient. Supports plain text and HTML body. Returns delivery status and message ID.",
+      "tags": [
+        "send", "email", "recipient", "subject",
+        "body", "html", "delivery", "notify"
+      ]
+    }
+  ]
+}

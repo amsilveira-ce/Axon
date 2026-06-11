@@ -1,0 +1,33 @@
+{
+  "name": "climate-intelligence",
+  "description": "Environmental and climate data tool. Provides real-time and historical carbon emissions data, climate risk assessments, ESG metrics and sustainability benchmarks. Integrates data from INPE, IPCC reports and global climate databases.",
+  "transport": "http",
+  "endpoint": "http://localhost:8041",
+  "auth_scheme": "none",
+  "auth_env_var": null,
+  "is_paid": false,
+  "cost_per_call": null,
+  "tags": [
+    "climate", "environment", "carbon", "emissions", "esg",
+    "sustainability", "deforestation", "temperature", "co2",
+    "greenhouse", "ipcc", "inpe", "biodiversity", "net-zero",
+    "climate-risk", "green", "environmental-data"
+  ],
+  "tools": [
+    {
+      "name": "get_emissions_data",
+      "description": "Returns carbon emissions data for a country, sector or company over a specified period. Includes CO2, methane and N2O in CO2-equivalent tons.",
+      "tags": ["emissions", "carbon", "co2", "methane", "greenhouse-gas", "scope"]
+    },
+    {
+      "name": "assess_climate_risk",
+      "description": "Evaluates physical and transition climate risks for a geographic region or industry sector. Returns risk score, exposure level and recommended adaptation measures.",
+      "tags": ["climate-risk", "physical-risk", "transition-risk", "exposure", "adaptation"]
+    },
+    {
+      "name": "get_esg_benchmark",
+      "description": "Returns ESG performance benchmarks for an industry sector or company ticker. Includes environmental score, social score, governance score and composite rating.",
+      "tags": ["esg", "sustainability", "benchmark", "rating", "score", "reporting"]
+    }
+  ]
+}
