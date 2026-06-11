@@ -1,0 +1,91 @@
+{
+  "name": "code-review-agent",
+  "description": "Autonomous code review agent. Analyzes source code to identify bugs, security vulnerabilities, code smells and style violations. Suggests refactoring strategies and improvements aligned with software engineering best practices.",
+  "url": "http://localhost:8041",
+  "version": "1.0.0",
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["application/json", "text/markdown"],
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "stateTransitionHistory": false,
+    "extensions": [
+      {
+        "uri": "axon-framework.dev/extensions/principal/v1",
+        "required": false,
+        "description": "Axon framework compatibility extension",
+        "params": {
+          "axon_version": "0.1.0",
+          "protocol_version": "0.1"
+        }
+      }
+    ]
+  },
+  "skills": [
+    {
+      "id": "code-analysis",
+      "name": "Code Analysis",
+      "description": "Performs static analysis on source code to identify structural issues, anti-patterns and deviations from coding standards. Supports Python, JavaScript, TypeScript and Java.",
+      "tags": [
+        "code", "analysis", "static-analysis", "quality",
+        "review", "inspect", "audit", "source-code"
+      ],
+      "examples": [
+        "analyze this Python function for issues",
+        "review this code and tell me what's wrong",
+        "check code quality for this module"
+      ],
+      "inputModes": ["text/plain", "application/json"],
+      "outputModes": ["application/json", "text/markdown"]
+    },
+    {
+      "id": "bug-detection",
+      "name": "Bug Detection",
+      "description": "Identifies potential runtime errors, logic flaws, null pointer dereferences, race conditions and security vulnerabilities in source code. Returns severity classification per finding.",
+      "tags": [
+        "bugs", "errors", "vulnerabilities", "security",
+        "defects", "issues", "flaws", "detection", "severity"
+      ],
+      "examples": [
+        "find bugs in this function",
+        "identify security vulnerabilities in this code",
+        "what errors could this code produce at runtime"
+      ],
+      "inputModes": ["text/plain", "application/json"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "refactoring-suggestions",
+      "name": "Refactoring Suggestions",
+      "description": "Proposes refactoring strategies to improve code maintainability, readability and performance. Identifies opportunities for design pattern application, dead code removal and complexity reduction.",
+      "tags": [
+        "refactoring", "improvement", "maintainability", "readability",
+        "clean-code", "design-patterns", "complexity", "optimization",
+        "restructure", "simplify"
+      ],
+      "examples": [
+        "suggest how to refactor this class",
+        "how can I simplify this function",
+        "propose improvements for this code"
+      ],
+      "inputModes": ["text/plain", "application/json"],
+      "outputModes": ["text/markdown", "application/json"]
+    },
+    {
+      "id": "pull-request-review",
+      "name": "Pull Request Review",
+      "description": "Reviews a code diff or pull request, providing structured feedback on correctness, test coverage, documentation and compliance with contribution guidelines.",
+      "tags": [
+        "pull-request", "pr", "diff", "review", "feedback",
+        "code-review", "git", "merge", "contribution"
+      ],
+      "examples": [
+        "review this pull request",
+        "give feedback on this diff",
+        "check this PR before merging"
+      ],
+      "inputModes": ["text/plain", "application/json"],
+      "outputModes": ["text/markdown"]
+    }
+  ]
+}

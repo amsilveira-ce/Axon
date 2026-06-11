@@ -1,0 +1,94 @@
+{
+  "name": "documentation-agent",
+  "description": "Autonomous technical documentation agent. Generates structured documentation from source code, API schemas and architecture descriptions. Produces README files, API reference docs, architecture decision records and changelogs aligned with documentation standards.",
+  "url": "http://localhost:8043",
+  "version": "1.0.0",
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["text/markdown", "text/plain"],
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "stateTransitionHistory": false,
+    "extensions": [
+      {
+        "uri": "axon-framework.dev/extensions/principal/v1",
+        "required": false,
+        "description": "Axon framework compatibility extension",
+        "params": {
+          "axon_version": "0.1.0",
+          "protocol_version": "0.1"
+        }
+      }
+    ]
+  },
+  "skills": [
+    {
+      "id": "readme-generation",
+      "name": "README Generation",
+      "description": "Generates a structured README.md from a project description, source code or repository context. Covers installation, usage, configuration, examples and contributing guidelines.",
+      "tags": [
+        "readme", "documentation", "markdown", "project",
+        "getting-started", "setup", "usage", "open-source",
+        "github", "docs", "write-docs"
+      ],
+      "examples": [
+        "generate a README for this project",
+        "write documentation for my repository",
+        "create a getting started guide"
+      ],
+      "inputModes": ["text/plain", "application/json"],
+      "outputModes": ["text/markdown"]
+    },
+    {
+      "id": "api-documentation",
+      "name": "API Documentation",
+      "description": "Generates API reference documentation from source code, function signatures or OpenAPI schemas. Produces endpoint descriptions, parameter tables, request/response examples and error codes.",
+      "tags": [
+        "api", "api-docs", "openapi", "swagger", "endpoints",
+        "rest", "reference", "parameters", "spec",
+        "api-spec", "documentation"
+      ],
+      "examples": [
+        "generate API documentation for this module",
+        "write docs for these REST endpoints",
+        "document this API from the source code"
+      ],
+      "inputModes": ["text/plain", "application/json"],
+      "outputModes": ["text/markdown", "application/json"]
+    },
+    {
+      "id": "changelog-generation",
+      "name": "Changelog Generation",
+      "description": "Generates a structured CHANGELOG.md from git commit history, pull request descriptions or release notes. Follows Keep a Changelog format with categorized entries for features, fixes, breaking changes and deprecations.",
+      "tags": [
+        "changelog", "release-notes", "versioning", "history",
+        "commits", "git", "semver", "breaking-changes",
+        "features", "fixes", "release"
+      ],
+      "examples": [
+        "generate a changelog from these commits",
+        "write release notes for version 2.0",
+        "create a changelog entry for this release"
+      ],
+      "inputModes": ["text/plain", "application/json"],
+      "outputModes": ["text/markdown"]
+    },
+    {
+      "id": "adr-generation",
+      "name": "Architecture Decision Record",
+      "description": "Generates Architecture Decision Records (ADR) documenting technical decisions, their context, alternatives considered and consequences. Follows the MADR (Markdown Architectural Decision Records) format.",
+      "tags": [
+        "adr", "architecture", "decision", "design-decision",
+        "technical-decision", "madr", "rationale",
+        "trade-offs", "consequences", "alternatives"
+      ],
+      "examples": [
+        "document this architecture decision",
+        "write an ADR for choosing PostgreSQL over MongoDB",
+        "create a technical decision record for this design choice"
+      ],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/markdown"]
+    }
+  ]
+}
