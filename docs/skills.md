@@ -1,189 +1,243 @@
-# Skills and domains
+# Skills and Domains
 
-Before the Principal Agent can do anything with a request, it has to
-understand it. That first step is called **intent extraction**: turning a
-sentence like *"summarize the Q3 sales report"* into a structured objective
-the rest of the system can act on.
+Every request the Principal Agent (PA) receives passes through **intent extraction** — the step that turns a natural-language sentence like *"summarize the Q3 sales report"* into a structured objective the rest of the system can act on.
 
-**Skills** are how you steer that step. A skill is a plain Markdown file of
-instructions for the intent extractor. Editing a skill changes how the PA
-interprets requests — no code, no redeploy.
+**Skills** are how you control that step. A skill is a plain Markdown file of instructions for the intent extractor. Editing a skill changes how the PA interprets requests — no code changes, no redeploy required.
 
-This page explains the two kinds of skill and how to work with them. For the
-exact command syntax, see [`axon pa skills`](cli.md#axon-pa-skills).
+This guide explains what skills are, how they compose, and how to create and manage them. For the complete command reference, see [`axon pa skills`](cli.md#axon-pa-skills).
 
-## Why skills exist
+---
 
-The intent extractor is driven by a language model, and a language model does
-what its instructions tell it to. Hard-coding those instructions in Python
-would mean every behavior change is a code change.
+## Overview
 
-Instead, Axon keeps the instructions in editable Markdown files. You can make
-the PA stricter about asking clarifying questions, teach it the vocabulary of
-your field, or add safety rules — all by editing text.
+The intent extractor is powered by a language model. Rather than hard-coding behavior in Python — where every change requires a code commit — Axon stores the extractor's instructions in editable Markdown files called **skills**.
 
-## The two kinds of skill
+This design gives you full control over how the PA behaves without touching application code. You can:
 
-### Base skill — always active
+- Make the PA stricter about asking clarifying questions before acting.
+- Teach it the vocabulary and data sources specific to your field.
+- Add compliance rules that require human confirmation before certain actions.
 
-The **base skill** (`intent_extraction.md`) defines the PA's general
-behavior: how it reasons about a request, what it must check before acting,
-and when it should stop and ask a clarifying question instead of guessing.
+---
 
-There is exactly one base skill, and it is always in effect.
+## Core concepts
 
-### Domain skills — optional, layered on top
+### The two kinds of skill
 
-A **domain skill** (`domains/<name>.md`) adds rules specific to a field of
-work — for example clinical, finance, or legal. A domain skill is *layered on
-top of* the base skill: the PA reads the base behavior first, then the domain
-rules.
+Axon uses two kinds of skill that layer on top of each other.
 
-Only one domain can be active at a time, and domains are optional. With no
-domain active, the PA runs on the base skill alone.
+**Base skill** (`intent_extraction.md`) defines the PA's general behavior: how it reasons about a request, what it must verify before acting, and when it should pause and ask a clarifying question rather than guess. There is exactly one base skill, and it is always active.
+
+**Domain skills** (`domains/<name>.md`) add rules specific to a field of work — for example `clinical`, `finance`, or `legal`. A domain skill layers on top of the base skill: the PA reads the base behavior first, then the domain rules. Only one domain can be active at a time, and domains are entirely optional. With no domain active, the PA runs on the base skill alone.
+
+### How skills compose
 
 ```text
             ┌─────────────────────┐
-request ──► │  base skill         │  general behavior (always)
+request ──► │  base skill         │  general behavior (always active)
             ├─────────────────────┤
             │  domain skill       │  field-specific rules (optional)
             ├─────────────────────┤
-            │  output contract    │  fixed — enforced by Axon
+            │  output contract    │  fixed structure — enforced by Axon
             └─────────────────────┘
                        │
                        ▼
               structured objective
 ```
 
-A domain skill is good for things like:
+The **output contract** at the bottom is the precise JSON shape that Axon's parser reads from the extractor's response. It is fixed and enforced by Axon — it is not part of what you customize.
 
-- **Available data sources** — what the system can fetch on its own, so the PA
-  does not ask the user for it ("patient records are available via
-  `health_search`").
-- **Required inputs** — what must always come from the user ("always confirm
-  the patient name before executing").
-- **Compliance rules** — actions that need human confirmation first
-  ("prescription changes require clarification before proceeding").
+### What domain skills are good for
 
-## Where skill files live
+Domain skills are well-suited to three categories of rules:
 
-Skill files are part of the Axon package source:
+- **Available data sources** — what the system can fetch on its own, so the PA does not prompt the user for information it can retrieve automatically (e.g., *"patient records are available via `health_search`"*).
+- **Required inputs** — what must always come from the user and can never be assumed (e.g., *"always confirm the patient name before executing"*).
+- **Compliance rules** — actions that require explicit human confirmation before the PA proceeds (e.g., *"prescription changes require clarification before proceeding"*).
+
+---
+
+## File layout
+
+Skill files are part of the Axon package source. All `axon pa skills` commands expect to be run from your project root.
 
 ```text
 src/axon/pa/skills/
-├── intent_extraction.md     # the base skill
+├── intent_extraction.md     # base skill — always active
 └── domains/
-    ├── clinical.md          # a domain skill
-    └── finance.md           # another domain skill
+    ├── clinical.md          # example domain skill
+    └── finance.md           # example domain skill
 ```
 
-Run `axon pa skills` commands from your project root so they can find this
-directory.
+> **Note:** Run `axon pa skills` commands from your project root. The CLI resolves skill paths relative to the package source from that location.
+
+---
 
 ## The output contract
 
-Every skill produces output in a fixed structure — the **output contract**.
-It is the precise JSON shape that Axon's parser reads back. The contract is
-enforced by Axon and is **not** something you should edit.
+Every skill, regardless of its content, must produce output in a fixed structure called the **output contract**. This contract is the JSON schema that Axon's parser reads after each extraction. It is enforced by Axon and is not something you should modify.
 
-This matters when you customize a skill: change the *behavior* freely, but
-leave the contract alone. If the contract is altered, the PA's output can no
-longer be parsed.
+When customizing a skill, change the *behavior* sections freely — but leave the contract section untouched. If the contract is altered, the PA's output will fail to parse.
 
-Two commands keep you safe:
+Two commands help you stay safe:
 
-- `axon pa skills validate` — checks that the output contract is intact.
-- `axon pa skills reset --contract-only` — repairs the contract while keeping
-  your behavior edits.
+| Command | Purpose |
+|---|---|
+| `axon pa skills validate` | Checks that the output contract is still intact. |
+| `axon pa skills reset --contract-only` | Restores the output contract while preserving your behavior edits. |
 
-## Common tasks
+> **Warning:** If you edit a skill and the PA starts producing unexpected output or errors, run `axon pa skills validate` first. A broken output contract is the most common cause.
 
-### See what skills exist
+---
+
+## How-to guides
+
+### List all skills
+
+To see what skills exist, which domain is currently active, and whether the output contract is intact, run:
 
 ```bash
 axon pa skills list
 ```
 
-This shows the base skill, every domain, which domain is currently active, and
-whether the output contract is intact.
+Example output:
 
-### Read a skill
+```
+base skill       intent_extraction.md   contract: ok
+domain (active)  domains/finance.md     contract: ok
+domain           domains/clinical.md    contract: ok
+```
+
+### Inspect a skill's content
+
+To read the base skill:
 
 ```bash
-axon pa skills show                 # the base skill
+axon pa skills show
+```
+
+To read a specific domain skill:
+
+```bash
 axon pa skills show --domain clinical
 ```
 
-### Create a domain
+### Create a new domain skill
+
+To scaffold a new domain skill, run:
 
 ```bash
 axon pa skills new --domain finance
 ```
 
-This creates `src/axon/pa/skills/domains/finance.md` from a template with
-sections for data sources, required inputs, and compliance rules. Open the
-file in your editor and fill it in — the template comments explain what each
-section is for.
+This creates `src/axon/pa/skills/domains/finance.md` from a template. The template includes commented sections for data sources, required inputs, and compliance rules. Open the file in your editor and replace the placeholder comments with your rules.
 
-### Activate a domain
+> **Tip:** The template comments are guides for what each section expects. Read them before filling in the file — they clarify what the intent extractor will do with each type of rule.
 
-Creating a domain file does not activate it. Activation is a configuration
-change:
+### Activate a domain skill
+
+Creating a domain file does not activate it automatically. Activation is a separate configuration step:
 
 ```bash
 axon pa config --domain finance
 ```
 
-To go back to the base skill only:
+The change takes effect on the next `axon pa run` or `axon pa chat` invocation — no restart is needed for already-running sessions.
+
+To deactivate all domains and return to the base skill only:
 
 ```bash
 axon pa config --domain none
 ```
 
-Changing the active domain takes effect on the next `axon pa run` or
-`axon pa chat`.
+> **Note:** Only one domain can be active at a time. Activating a new domain automatically deactivates the previous one.
 
 ### Customize the base skill
 
-Edit `src/axon/pa/skills/intent_extraction.md` directly. Adjust the behavior —
-how strict it is, what it checks for — but do not touch the output contract.
-After editing, run:
+Open `src/axon/pa/skills/intent_extraction.md` in your editor and adjust the behavior sections — how strict the PA is, what it checks for, what vocabulary it recognizes. Do not modify the output contract section.
+
+After editing, validate your changes:
 
 ```bash
 axon pa skills validate
 ```
 
-If you ever want a clean slate:
+If validation passes, your changes are ready. If you need to restore a clean baseline:
 
 ```bash
-axon pa skills reset                  # restore the whole base skill
+axon pa skills reset                  # restore the entire base skill to defaults
 axon pa skills reset --contract-only  # restore only the output contract
 ```
 
-## A typical workflow
+> **Warning:** `axon pa skills reset` without `--contract-only` overwrites all your behavior edits. Use `--contract-only` if you only need to fix a broken contract while keeping your customizations.
+
+---
+
+## End-to-end example: adding a finance domain
+
+This walkthrough shows the full lifecycle of creating a domain skill for a financial analysis workflow, activating it, and confirming that it shapes the PA's behavior as expected.
+
+**Step 1: Scaffold the domain**
 
 ```bash
-# 1. create a domain for your field
 axon pa skills new --domain finance
+```
 
-# 2. edit the file — add data sources, required inputs, compliance rules
-#    (src/axon/pa/skills/domains/finance.md)
+This creates the file `src/axon/pa/skills/domains/finance.md`. You should see:
 
-# 3. activate it
+```
+Created: src/axon/pa/skills/domains/finance.md
+```
+
+**Step 2: Edit the domain file**
+
+Open the file in your editor. Fill in the three template sections:
+
+- Under *Available data sources*, add the tools the system can call on its own — for example, a `ledger_search` tool that retrieves GL entries without prompting the user.
+- Under *Required inputs*, list what must always come from the user — for example, the fiscal period must always be confirmed before any reconciliation runs.
+- Under *Compliance rules*, add any approval gates — for example, journal entries above a threshold require a second confirmation.
+
+**Step 3: Validate the skill**
+
+Before activating, verify that your edits left the output contract intact:
+
+```bash
+axon pa skills validate
+```
+
+Expected output:
+
+```
+base skill:    contract ok
+domain finance: contract ok
+```
+
+**Step 4: Activate the domain**
+
+```bash
 axon pa config --domain finance
+```
 
-# 4. confirm it is active
+**Step 5: Confirm the active state**
+
+```bash
 axon pa skills list
+```
 
-# 5. try a request and inspect how it was interpreted
+The `finance` domain should now appear as `(active)`.
+
+**Step 6: Test with a real request**
+
+```bash
 axon pa run -q "reconcile the Q3 ledger" -v
 ```
 
-The `-v` (verbose) flag prints the context and extraction details, which is
-the fastest way to see whether your skill edits had the intended effect.
+The `-v` flag prints the full extraction context, including which skills were loaded and how the request was parsed into a structured objective. This is the fastest way to verify that your domain rules had the intended effect.
+
+---
 
 ## See also
 
-- [`axon pa skills`](cli.md#axon-pa-skills) — full command reference
-- [Configuration](configuration.md#paintent_extractor) — the `intent_extractor.domain` setting
-- [Architecture](architecture.md) — where intent extraction sits in the pipeline
+- [`axon pa skills`](cli.md#axon-pa-skills) — full command reference for all skill subcommands
+- [Configuration](configuration.md#paintent_extractor) — the `intent_extractor.domain` setting and other PA configuration options
+- [Architecture](architecture.md) — where intent extraction fits in the overall pipeline

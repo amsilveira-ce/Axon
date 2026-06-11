@@ -1,8 +1,8 @@
 # Getting Started
 
-This guide helps you get Axon running locally, register your first agent, and send a query through the full PA → GA → agent flow.
+Let's get Axon running on your machine, register your first agent, and send a query through the full PA → GA → agent pipeline — from install to a working interactive session.
 
-By the end, you will have:
+By the end of this tutorial, you will have:
 
 - Installed the Axon CLI
 - Initialized a local Axon workspace
@@ -11,7 +11,7 @@ By the end, you will have:
 
 ## How Axon fits together
 
-Axon sits between your application and your agents:
+Before diving in, it helps to understand what Axon actually does. Axon sits between your application and your agents as a coordination layer:
 
 ```
 your app / CLI
@@ -25,64 +25,65 @@ your agents       ← do the actual work
 
 The two core components are:
 
-- **Principal Agent (PA)**: receives user queries, extracts intent, builds a plan, and coordinates execution
-- **Gateway Agent (GA)**: keeps a registry of available resources and returns the best match for each task
+- **Principal Agent (PA)**: receives user queries, extracts intent, builds a plan, and coordinates execution across one or more agents
+- **Gateway Agent (GA)**: keeps a registry of available resources and returns the best match for each task using semantic search
+
+We'll bring both of these online in the steps below.
 
 ## Prerequisites
 
-Before you begin, make sure you have:
+Make sure your environment meets the following requirements before starting:
 
-- Python 3.11+
-- [Ollama](https://ollama.com) running locally
-- An A2A-compatible agent available over HTTP
+- **Python** 3.11 or higher
+- **[Ollama](https://ollama.com)** installed and running locally
+- An **A2A-compatible agent** reachable over HTTP
 
-Pull a model for the PA before starting:
+Axon uses a local LLM (via Ollama) to power the Principal Agent. Pull a model before you begin — `deepseek-r1:14b` gives the best reasoning quality, but `llama3.2` is a lighter alternative:
 
 ```bash
 ollama pull deepseek-r1:14b
-# or
+# or, for a lighter footprint:
 ollama pull llama3.2
 ```
 
-## 1. Install Axon
+> **Note:** The model you pull here is what the PA will use for intent extraction and planning. You can change it later with `axon pa config --llm <model>` without re-registering anything.
 
-Install the CLI from PyPI:
+## Step 1: Install Axon
+
+Install the CLI directly from PyPI:
 
 ```bash
 pip install axon-framework
 ```
 
-## 2. Initialize a workspace
+We recommend installing inside a virtual environment to keep dependencies isolated.
 
-Run Axon once in your project directory:
+## Step 2: Initialize a workspace
+
+Axon needs a workspace to store configuration, registry entries, and session data. Run `axon init` once inside your project directory:
 
 ```bash
 axon init
 ```
 
-For a non-interactive setup:
+If you want to skip the interactive prompts and accept sensible defaults, pass `--defaults`:
 
 ```bash
 axon init --defaults
 ```
 
-After initialization, you should see:
+After initialization, two things appear in your project:
 
-- `axon.config.json`: your local configuration
-- `.axon/`: runtime data such as registry entries, sessions, and traces
+- `axon.config.json` — your local configuration (model, budget, domain skill, etc.)
+- `.axon/` — runtime data: registry entries, session history, and traces
 
-`axon init` also registers four ready-to-use **local tools** — `calculator`,
-`web_search`, `file_reader`, and `datetime_tool` — that the Principal Agent can
-call directly. List them with `axon pa tools list`. See [Local tools](local-tools.md).
+> **Tip:** `axon init` also registers four ready-to-use **local tools** — `calculator`, `web_search`, `file_reader`, and `datetime_tool` — that the PA can call without routing through any agent. To see them, run `axon pa tools list`. See [Local tools](local-tools.md) for details on adding your own.
 
-## 3. Prepare an agent for registration
+## Step 3: Prepare an agent for registration
 
-Axon uses the [A2A protocol](https://a2a-protocol.org) to communicate with agents. To register an agent, you need:
+Axon uses the [A2A protocol](https://a2a-protocol.org) to communicate with agents. The protocol requires each agent to expose an **agent card** — a JSON file at `/.well-known/agent.json` that describes what the agent can do. The GA reads this card to understand the agent's capabilities and uses the skill descriptions for semantic matching.
 
-1. An agent card at `/.well-known/agent.json`
-2. An Axon token embedded in that card
-
-Example agent card:
+Here's what a minimal agent card looks like:
 
 ```json
 {
@@ -104,13 +105,15 @@ Example agent card:
 }
 ```
 
-Generate a token:
+> **Note:** The `description` field inside each skill is what the GA runs semantic search against when routing a query. Write it to describe the task clearly — not just the technology.
+
+To register an agent, Axon also requires a signed token embedded in the card. Generate one now:
 
 ```bash
 axon token generate --name my-agent
 ```
 
-Add it to `capabilities.extensions` in the agent card:
+Then add it to `capabilities.extensions` in your agent card:
 
 ```json
 "capabilities": {
@@ -125,17 +128,17 @@ Add it to `capabilities.extensions` in the agent card:
 }
 ```
 
-## 4. Register the agent
+> **Warning:** Keep this token private. Axon uses it to verify the agent's identity at registration time — anyone who holds the token can register an agent as if it were yours.
 
-Once the agent is reachable, register it with the GA:
+## Step 4: Register the agent
+
+With the agent running and its card in place, register it with the Gateway Agent:
 
 ```bash
 axon add agent http://localhost:8000
 ```
 
-Axon will fetch the agent card, validate the token, and store the resource in the registry.
-
-Expected output:
+Axon fetches the agent card from `http://localhost:8000/.well-known/agent.json`, validates the embedded token, and stores the resource in the registry. You should see output like this:
 
 ```
 ◇ agent card       my-agent v1.0.0
@@ -150,29 +153,29 @@ Expected output:
   │  status      online
 ```
 
-To confirm what is currently registered:
+To confirm the registration took effect, list all registered resources:
 
 ```bash
 axon ga resource list
 ```
 
-## 5. Run your first query
+## Step 5: Run your first query
 
-You can send a one-shot query:
+We're ready to send a query through the full pipeline. The simplest way is a one-shot run:
 
 ```bash
 axon pa run --query "summarize the Q3 sales report"
 ```
 
-The PA will extract intent, ask the GA for matching resources, and coordinate execution.
+Behind the scenes, the PA extracts the intent from your query, asks the GA for the best-matching resource, dispatches the task to your agent, and returns the result.
 
-You can also start an interactive session:
+We can also open an interactive session where the PA maintains context across turns:
 
 ```bash
 axon pa chat
 ```
 
-If a query is ambiguous, Axon asks clarifying questions before taking action:
+When a query is ambiguous, Axon asks clarifying questions before taking any action — rather than making assumptions that could lead to incorrect results:
 
 ```
   you: analyze the patient data
@@ -191,40 +194,39 @@ If a query is ambiguous, Axon asks clarifying questions before taking action:
   │  generate a full clinical report for patient John Silva
 ```
 
-## 6. Tune the Principal Agent
+## Step 6: Tune the Principal Agent
 
-The PA works out of the box, but you can shape its behavior without touching
-any code.
+The PA works out of the box, but you can shape its behavior without touching any code. Let's look at the most useful knobs.
 
-Inspect the current settings:
+Inspect all current settings first:
 
 ```bash
 axon pa config
 ```
 
-Change a setting — for example, switch the model or set a per-run budget:
+Switch the model or set a per-run token budget:
 
 ```bash
 axon pa config --llm llama3.2 --budget-tokens 30000
 ```
 
-You can also teach the PA the vocabulary and rules of your field with a
-**domain skill**:
+You can also teach the PA the vocabulary and rules specific to your domain with a **domain skill**. This steers how the PA interprets requests — useful when your users speak in domain-specific terms the base model may not handle well:
 
 ```bash
-axon pa skills new --domain finance   # create the skill file
+axon pa skills new --domain finance   # scaffolds the skill file
 # edit src/axon/pa/skills/domains/finance.md
 axon pa config --domain finance       # activate it
 ```
 
-See [Skills](skills.md) for how skills steer intent extraction, and
-[Local tools](local-tools.md) for adding your own tools.
+See [Skills](skills.md) for a full explanation of how skills influence intent extraction.
 
 ## Next steps
 
-- [Architecture](architecture.md): understand how the PA and GA work internally
-- [Configuration](configuration.md): tune the model, budget, and context window
-- [The context layer](context-layer.md): how the PA remembers things across turns
-- [Skills](skills.md): steer how the PA understands requests
-- [Local tools](local-tools.md): give the PA tools it can call directly
-- [CLI reference](cli.md): explore the full command surface
+Now that you have a working end-to-end setup, here are the best places to go deeper:
+
+- [Architecture](architecture.md) — understand how the PA and GA work internally
+- [Configuration](configuration.md) — tune the model, budget, and context window
+- [The context layer](context-layer.md) — how the PA remembers things across turns
+- [Skills](skills.md) — steer how the PA understands requests
+- [Local tools](local-tools.md) — give the PA tools it can call directly
+- [CLI reference](cli.md) — explore the full command surface
