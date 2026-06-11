@@ -90,6 +90,7 @@ dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pypdf" },
+    { name = "pyyaml" },
     { name = "typer" },
 ]
 
@@ -100,6 +101,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", specifier = ">=2.13.3" },
     { name = "pypdf", specifier = ">=4.0.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "typer", specifier = ">=0.25.1" },
 ]
 

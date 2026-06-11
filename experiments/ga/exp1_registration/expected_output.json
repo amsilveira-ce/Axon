@@ -1,0 +1,86 @@
+{
+  "title": "Experiment 1 — Registration & Admission",
+  "total": 12,
+  "passed": 12,
+  "registry_state": {
+    "resources": {
+      "count": 4,
+      "names": ["code-review-agent", "resend", "health-search", "consumed-test-resource"]
+    },
+    "tokens": {
+      "used": 4,
+      "pending": 2,
+      "revoked": 1
+    }
+  },
+  "scenarios": {
+    "positive": [
+      {
+        "id": "pos_01",
+        "label": "A2A agent registered successfully",
+        "expected": "validate_agent returns ok=True, resource persisted in registry"
+      },
+      {
+        "id": "pos_02",
+        "label": "MCP HTTP tool registered from manifest",
+        "expected": "resend resource persisted, token marked used"
+      },
+      {
+        "id": "pos_03",
+        "label": "MCP stdio tool registered from manifest",
+        "expected": "health-search resource persisted, token marked used"
+      },
+      {
+        "id": "pos_04",
+        "label": "Token status is pending before use",
+        "expected": "token.status == 'pending' before registration"
+      },
+      {
+        "id": "pos_05",
+        "label": "Token consumed after registration",
+        "expected": "token.status == 'used' after successful registration"
+      },
+      {
+        "id": "pos_06",
+        "label": "Token revocation prevents future use",
+        "expected": "verify_local raises TokenVerificationError with 'revoked' in message"
+      }
+    ],
+    "negative": [
+      {
+        "id": "neg_01",
+        "label": "Invalid token format rejected",
+        "expected": "verify_local raises TokenVerificationError with 'not found' in message"
+      },
+      {
+        "id": "neg_02",
+        "label": "Consumed token rejected",
+        "expected": "verify_local raises TokenVerificationError with 'already used' in message"
+      },
+      {
+        "id": "neg_03",
+        "label": "Unknown token rejected",
+        "expected": "verify_local raises TokenVerificationError with 'not found' in message"
+      },
+      {
+        "id": "neg_04",
+        "label": "Unreachable agent rejected, token preserved",
+        "expected": "validate_agent returns ok=False; token status remains 'pending'"
+      },
+      {
+        "id": "neg_05",
+        "label": "Duplicate resource rejected, token preserved",
+        "expected": "resource_exists returns True; token status remains 'pending'"
+      },
+      {
+        "id": "neg_06",
+        "label": "Request without X-Axon-PA-ID rejected",
+        "expected": "POST /ga/resources returns HTTP 401"
+      }
+    ]
+  },
+  "notes": {
+    "token_count_detail": "1 A2A token (pos_01/pos_04/pos_05) + 1 resend token (pos_02) + 1 health-search token (pos_03) + 1 consumed-test token (neg_02) = 4 used; 1 unreachable-agent token (neg_04) + 1 code-review-agent-dup token (neg_05) = 2 pending; 1 revoke-test token (pos_06) = 1 revoked",
+    "resource_count_detail": "code-review-agent (pos_01) + resend (pos_02) + health-search (pos_03) + consumed-test-resource (neg_02) = 4 total"
+  }
+}
