@@ -52,25 +52,31 @@ class ValidationResult:
 @dataclass
 class McpValidationResult:
     """Resultado da validação de um recurso MCP (conexão viva + tools)."""
-    ok:          bool
-    tools:       list[str]            = field(default_factory=list)   # nomes (para preview/count)
-    tool_specs:  list[dict[str, str]] = field(default_factory=list)   # {name, description} p/ matching
-    fingerprint: str | None           = None
-    error:       str | None           = None
-    step:        str | None           = None
+    ok:             bool
+    tools:          list[str]            = field(default_factory=list)
+    tool_specs:     list[dict[str, str]] = field(default_factory=list)
+    fingerprint:    str | None           = None
+    error:          str | None           = None
+    step:           str | None           = None
+    verified_token: str | None           = None
 
 
-def validate_mcp(manifest: "ResourceManifest") -> McpValidationResult:  # type: ignore[name-defined]
+def validate_mcp(
+    manifest: "ResourceManifest",  # type: ignore[name-defined]
+    token:    str | None = None,
+    paths:    "GAPaths | None" = None,  # type: ignore[name-defined]
+) -> McpValidationResult:
     """
     Valida um recurso MCP antes do registro no Gateway.
 
-    Prova de validade = conexão viva: usa o MCPClient para conectar de verdade
-    (HTTP/SSE/stdio, com a auth do manifest) e listar as tools. As tools provam
-    que o recurso existe, está no ar e o que ele faz. O fingerprint é calculado
-    sobre (binding + endpoint/command + tools ordenadas).
+    Etapas:
+      1. Conexão viva via MCPClient — prova que o recurso existe e lista tools
+      2. Verificação do token de admissão (se fornecido)
+      3. Fingerprint HMAC-SHA256 keyed pelo token (ou plain hash se sem token)
 
-    Diferente do A2A, o recurso MCP não carrega axon_token — a autorização é
-    apresentada pelo operador no momento do registro (token de admissão).
+    O token é verificado internamente e retornado em verified_token — o caller
+    apenas chama mark_used(result.verified_token, ...) após add_resource, sem
+    precisar chamar verify_local separadamente (mesmo padrão do validate_agent).
     """
     import asyncio
 
@@ -88,25 +94,46 @@ def validate_mcp(manifest: "ResourceManifest") -> McpValidationResult:  # type: 
         return McpValidationResult(ok=False, step="connect", error=str(e))
 
     names = [s["name"] for s in specs]
-    fp = fingerprint({
-        "binding":  manifest.protocol_binding.value,
-        "endpoint": manifest.endpoint,
-        "command":  manifest.command,
-        # nome + descrição → drift detectado se o servidor mudar o que oferece
-        "tools":    sorted(f"{s['name']}\n{s['description']}" for s in specs),
-    })
-    return McpValidationResult(ok=True, tools=names, tool_specs=specs, fingerprint=fp)
+
+    # token verification — mirrors _verify_token in the A2A path
+    if token:
+        if paths is None:
+            return McpValidationResult(
+                ok=False, step="admission_token",
+                error="paths required to verify admission token",
+            )
+        try:
+            verify_local(token, paths)
+        except TokenVerificationError as e:
+            return McpValidationResult(ok=False, step="admission_token", error=str(e))
+
+    # fingerprint: HMAC-keyed when token present, plain hash otherwise
+    if token:
+        from axon.ga.registry import fingerprint_of_mcp_live
+        fp = fingerprint_of_mcp_live(manifest, specs, token)
+    else:
+        fp = fingerprint({
+            "binding":  manifest.protocol_binding.value,
+            "endpoint": manifest.endpoint,
+            "command":  manifest.command,
+            "tools":    sorted(f"{s['name']}\n{s['description']}" for s in specs),
+        })
+
+    return McpValidationResult(
+        ok=True, tools=names, tool_specs=specs,
+        fingerprint=fp, verified_token=token,
+    )
 
 
-def _verify_token(axon_meta: AxonMetadata) -> TokenVerificationError | None:
+def _verify_token(axon_meta: AxonMetadata, paths: "GAPaths") -> TokenVerificationError | None:  # type: ignore[name-defined]
     """
     Despacha a verificação do token para o registry correto.
- 
+
     Retorna None se o token é válido, ou um TokenVerificationError se não.
     """
     if axon_meta.registry_id == "local":
         try:
-            verify_local(axon_meta.token)
+            verify_local(axon_meta.token, paths)
             return None
         except TokenVerificationError as e:
             return e
@@ -122,7 +149,7 @@ def _verify_token(axon_meta: AxonMetadata) -> TokenVerificationError | None:
         )
 
 
-def validate_agent(url: str)-> ValidationResult:
+def validate_agent(url: str, paths: "GAPaths") -> ValidationResult:  # type: ignore[name-defined]
     """
     Valida um agente A2A antes do registro no Gateway.
 
@@ -248,7 +275,7 @@ def validate_agent(url: str)-> ValidationResult:
             )
         )
  
-    token_err = _verify_token(axon_meta)
+    token_err = _verify_token(axon_meta, paths)
     if token_err is not None:
         return ValidationResult(
             ok=False, step="axon_token",

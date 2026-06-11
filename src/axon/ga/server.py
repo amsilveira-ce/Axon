@@ -66,16 +66,22 @@ class RegisterRequest(BaseModel):
 
 
 @app.post("/ga/resources", status_code=201)
-async def register_resource(req: RegisterRequest) -> dict:
+async def register_resource(
+    req: RegisterRequest,
+    x_axon_pa_id: str | None = Header(default=None),
+) -> dict:
     """Register an A2A agent. Validates Axon token before persisting."""
+    if not x_axon_pa_id:
+        raise HTTPException(status_code=401, detail="X-Axon-PA-ID header is required")
+
     import secrets
     from axon.validator import validate_agent
-    from axon.ga.registry import add_resource
-    from axon.ga.tokens import mark_used, TokenVerificationError
-    from axon.types import Resource, ResourceType, ResourceStatus
+    from axon.ga.registry import add_resource, resource_exists
+    from axon.ga.tokens import mark_used
+    from axon.types import Resource, ResourceType, ResourceStatus, ProtocolBinding
 
-    ga = _ga()
-    result = validate_agent(req.url)
+    ga     = _ga()
+    result = validate_agent(req.url, ga.paths)
 
     if not result.ok:
         raise HTTPException(
@@ -83,11 +89,20 @@ async def register_resource(req: RegisterRequest) -> dict:
             detail={"step": result.step, "error": result.error},
         )
 
-    card     = result.agent_card
+    card = result.agent_card
+    name = req.name or card.name
+
+    if resource_exists(name, ga.paths):
+        raise HTTPException(
+            status_code=409,
+            detail=f"resource '{name}' is already registered — use 'axon ga resource remove {name}' first",
+        )
+
     resource = Resource(
         id=f"res-{secrets.token_hex(3)}",
         type=ResourceType.agent,
-        name=req.name or card.name,
+        protocol_binding=ProtocolBinding.HTTP_JSON,
+        name=name,
         endpoint=req.url,
         description=card.description,
         skills=card.skills,

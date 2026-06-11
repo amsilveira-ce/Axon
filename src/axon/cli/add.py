@@ -196,7 +196,7 @@ def add_mcp(
     import shlex
     from axon.ga.config import GAConfig
     from axon.ga.registry import add_resource
-    from axon.ga.tokens import verify_local, mark_used, TokenVerificationError
+    from axon.ga.tokens import mark_used
     from axon.types import (
         AuthConfig, AuthScheme, AuthLocation, A2ASkill,
         ProtocolBinding, Resource, ResourceManifest, ResourcePolicy, ResourceStatus, ResourceType,
@@ -242,10 +242,11 @@ def add_mcp(
     console.print(f"\n  {step(f'Connecting to [cyan]{name}[/cyan] ([dim]{binding.value}[/dim])')}")
     console.print(divider())
 
-    # 4. validação = conexão viva + tools
-    result = validate_mcp(manifest)
+    # 4. validação = conexão viva + token verification + HMAC fingerprint
+    result = validate_mcp(manifest, token=token, paths=ga.paths)
     if not result.ok:
-        console.print("  [red]■[/red] connect failed\n")
+        step_label = "admission token" if result.step == "admission_token" else "connect"
+        console.print(f"  [red]■[/red] {step_label} failed\n")
         for line in (result.error or "").split("\n"):
             console.print(f"  [dim]{line}[/dim]")
         console.print()
@@ -255,15 +256,7 @@ def add_mcp(
     console.print(divider())
     console.print(f"  {step(f'fingerprint      [dim]{result.fingerprint}[/dim]')}")
     console.print(divider())
-
-    # 5. token de admissão (opcional)
-    if token:
-        try:
-            verify_local(token, ga.paths)
-        except TokenVerificationError as e:
-            console.print("  [red]■[/red] admission token rejected\n")
-            console.print(f"  [dim]{e}[/dim]\n")
-            raise typer.Exit(1)
+    if result.verified_token:
         console.print(f"  {step('admission token  [green]verified[/green]')}")
         console.print(divider())
 
@@ -305,9 +298,9 @@ def add_mcp(
     except Exception as e:
         fatal(f"Could not write to registry: {e}")
 
-    if token:
+    if result.verified_token:
         try:
-            mark_used(token, resource.id, ga.paths)
+            mark_used(result.verified_token, resource.id, ga.paths)
         except Exception:
             console.print(warn("could not update token status"))
 
@@ -375,7 +368,7 @@ def add_resource(
     import secrets as _secrets
     from axon.ga.config import GAConfig
     from axon.ga.registry import add_resource as _add_resource
-    from axon.ga.tokens import verify_local, mark_used, TokenVerificationError
+    from axon.ga.tokens import mark_used
     from axon.types import (
         A2ASkill, AuthScheme, Resource, ResourceManifest,
         ResourcePolicy, ResourceStatus, ResourceType,
@@ -450,9 +443,10 @@ def add_resource(
     console.print(f"\n  {step(f'Connecting to [cyan]{name}[/cyan] ([dim]{binding.value}[/dim])')}")
     console.print(divider())
 
-    result = validate_mcp(manifest)
+    result = validate_mcp(manifest, token=token, paths=ga.paths)
     if not result.ok:
-        console.print("  [red]■[/red] connect failed\n")
+        step_label = "admission token" if result.step == "admission_token" else "connect"
+        console.print(f"  [red]■[/red] {step_label} failed\n")
         for line in (result.error or "").split("\n"):
             console.print(f"  [dim]{line}[/dim]")
         console.print()
@@ -462,15 +456,7 @@ def add_resource(
     console.print(divider())
     console.print(f"  {step(f'fingerprint      [dim]{result.fingerprint}[/dim]')}")
     console.print(divider())
-
-    # 4. admission token (optional)
-    if token:
-        try:
-            verify_local(token, ga.paths)
-        except TokenVerificationError as e:
-            console.print("  [red]■[/red] admission token rejected\n")
-            console.print(f"  [dim]{e}[/dim]\n")
-            raise typer.Exit(1)
+    if result.verified_token:
         console.print(f"  {step('admission token  [green]verified[/green]')}")
         console.print(divider())
 
@@ -517,9 +503,9 @@ def add_resource(
     except Exception as e:
         fatal(f"Could not write to registry: {e}")
 
-    if token:
+    if result.verified_token:
         try:
-            mark_used(token, resource.id, ga.paths)
+            mark_used(result.verified_token, resource.id, ga.paths)
         except Exception:
             console.print(warn("could not update token status"))
 
