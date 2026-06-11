@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
+import shlex
 from enum import Enum
 from datetime import datetime, timezone
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Any
 from pydantic import AliasChoices, BaseModel, Field, model_validator
-from typing import Any
 
 
 class OperationalMode(str, Enum):
@@ -404,3 +406,118 @@ class ResourceManifest(BaseModel):
             else:
                 assert self.endpoint, f"{self.protocol_binding} requer endpoint"
         return self
+
+
+# ── Resource YAML (axon/v1 declarative format) ────────────────────────────────
+
+class _YamlTransport(BaseModel):
+    protocol: str  # mcp_streamable_http | mcp_http | mcp_sse | mcp_stdio
+    endpoint: str | None = None
+    command: str | None = None
+
+
+class _YamlAuth(BaseModel):
+    scheme: str = "none"
+    location: str = "header"
+    header: str | None = None
+    param: str | None = None
+    env_var: str | None = None
+    hint: str | None = None
+    scopes: list[str] = Field(default_factory=list)
+    client_id_env: str | None = None
+    client_secret_env: str | None = None
+
+
+class YamlSkill(BaseModel):
+    id: str
+    description: str
+    examples: list[str] = Field(default_factory=list)
+
+
+class _YamlPolicy(BaseModel):
+    paid: bool = False
+    cost_per_call: float | None = None
+
+
+class _YamlSpec(BaseModel):
+    description: str
+    transport: _YamlTransport
+    skills: list[YamlSkill] = Field(default_factory=list)
+    auth: _YamlAuth = Field(default_factory=_YamlAuth)
+    policy: _YamlPolicy = Field(default_factory=_YamlPolicy)
+
+
+class _YamlMetadata(BaseModel):
+    name: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class _YamlGovernance(BaseModel):
+    token: str | None = None
+
+
+class ResourceYaml(BaseModel):
+    apiVersion: str = "axon/v1"
+    kind: str = "Resource"
+    metadata: _YamlMetadata
+    spec: _YamlSpec
+    governance: _YamlGovernance = Field(default_factory=_YamlGovernance)
+
+    @model_validator(mode="after")
+    def _check_transport(self) -> "ResourceYaml":
+        t = self.spec.transport
+        proto = t.protocol.lower()
+        if proto in ("mcp_streamable_http", "mcp_http", "mcp_sse"):
+            if not t.endpoint:
+                raise ValueError(f"transport.protocol '{proto}' requires transport.endpoint")
+        elif proto == "mcp_stdio":
+            if not t.command:
+                raise ValueError("transport.protocol 'mcp_stdio' requires transport.command")
+        else:
+            raise ValueError(
+                f"Unknown transport.protocol '{t.protocol}'. "
+                "Expected: mcp_streamable_http | mcp_http | mcp_sse | mcp_stdio"
+            )
+        return self
+
+    def missing_env_vars(self) -> list[str]:
+        """Return declared env var names that are not set in the environment."""
+        a = self.spec.auth
+        return [v for v in [a.env_var, a.client_id_env, a.client_secret_env] if v and not os.environ.get(v)]
+
+    def to_protocol_binding(self) -> ProtocolBinding:
+        proto = self.spec.transport.protocol.lower()
+        return {
+            "mcp_streamable_http": ProtocolBinding.MCP_HTTP,
+            "mcp_http":            ProtocolBinding.MCP_HTTP,
+            "mcp_sse":             ProtocolBinding.MCP_SSE,
+            "mcp_stdio":           ProtocolBinding.MCP_STDIO,
+        }[proto]
+
+    def to_auth_config(self) -> AuthConfig:
+        a = self.spec.auth
+        return AuthConfig(
+            scheme=AuthScheme(a.scheme),
+            location=AuthLocation(a.location),
+            header=a.header,
+            param=a.param,
+            env_var=a.env_var,
+            scopes=a.scopes,
+            client_id_env=a.client_id_env,
+            client_secret_env=a.client_secret_env,
+        )
+
+    def to_command(self) -> list[str] | None:
+        cmd = self.spec.transport.command
+        return shlex.split(cmd) if cmd else None
+
+
+def load_resource_yaml(path: str | Path) -> ResourceYaml:
+    import yaml
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Resource YAML not found: {path}")
+    raw = yaml.safe_load(p.read_text())
+    if not isinstance(raw, dict):
+        raise ValueError("Resource YAML must be a mapping at the top level")
+    return ResourceYaml.model_validate(raw)

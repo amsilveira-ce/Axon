@@ -15,7 +15,6 @@ import os
 from pathlib import Path
 
 from axon.config import (
-    AxonConfig,
     GAInstanceConfig,
     read_config,
     _ENV_GA_CONTEXT,
@@ -80,11 +79,11 @@ class GAConfig:
             cfg = read_config(cwd)
         except FileNotFoundError:
             # fallback sem config — usa paths padrão
-            ctx      = ctx or "default"
+            ctx      = ctx or "axon_default"
             base     = cwd or Path.cwd()
-            ga_dir   = base / ".axon" / "ga"
+            ga_dir   = base / ".axon" / "ga" / ctx
             instance = GAInstanceConfig(
-                name="Axon Local Gateway",
+                name=ctx,
                 port=5000,
                 data_dir=str(ga_dir),
             )

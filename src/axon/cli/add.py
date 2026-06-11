@@ -18,8 +18,9 @@ def _validate_url(url: str) -> None:
 
 @app.command("agent")
 def add_agent(
-    url:  str        = typer.Argument(..., help="Agent endpoint URL (A2A)"),
-    name: str | None = typer.Option(None, "--name", help="Override resource name"),
+    url:     str        = typer.Argument(..., help="Agent endpoint URL (A2A)"),
+    name:    str | None = typer.Option(None, "--name",    help="Override resource name"),
+    gateway: str | None = typer.Option(None, "--gateway", help="GA context to register into (default: active context)"),
 ) -> None:
     """
     Register an A2A agent with the active Gateway.
@@ -41,7 +42,7 @@ def add_agent(
     _validate_url(url)
 
     # resolve GA ativo — todos os path-dependent calls usam ga.paths
-    ga = GAConfig.resolve()
+    ga = GAConfig.resolve(gateway)
 
     console.print()
     console.print(info(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
@@ -180,6 +181,7 @@ def add_mcp(
     cost_per_call: float | None = typer.Option(None, "--cost-per-call", help="Custo estimado em USD por chamada"),
     token:       str | None = typer.Option(None, "--token",   help="Token de admissão Axon (axon_tk_...) — opcional"),
     description: str        = typer.Option("", "--description", help="Descrição do recurso"),
+    gateway:     str | None = typer.Option(None, "--gateway", help="GA context to register into (default: active context)"),
 ) -> None:
     """
     Register an MCP resource with the active Gateway.
@@ -234,7 +236,7 @@ def add_mcp(
         auth=auth_cfg,
     )
 
-    ga = GAConfig.resolve()
+    ga = GAConfig.resolve(gateway)
     console.print()
     console.print(info(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
     console.print(f"\n  {step(f'Connecting to [cyan]{name}[/cyan] ([dim]{binding.value}[/dim])')}")
@@ -324,6 +326,215 @@ def add_mcp(
     console.print(info(f"auth        [dim]{auth_display}[/dim]"))
     console.print(info(f"pricing     [dim]{pricing_display}[/dim]"))
     console.print(info(f"tools       [dim]{tools_preview or '—'}[/dim]"))
+    if endpoint:
+        console.print(info(f"endpoint    [dim]{endpoint}[/dim]"))
+    if command:
+        console.print(info(f"command     [dim]{' '.join(command)}[/dim]"))
+    console.print(info(f"token_ref   [dim]{token or '—'}[/dim]"))
+    console.print(info(f"context     [dim]{ga.context}[/dim]"))
+    console.print(info(f"saved to    [dim]{ga.paths.registry}[/dim]"))
+    console.print()
+
+
+# ── resource (declarative YAML) ──────────────────────────────────────────────
+
+@app.command("resource")
+def add_resource(
+    yaml_path: str  = typer.Argument(..., help="Path to resource YAML file (kind: Resource)"),
+    dry_run:   bool = typer.Option(False, "--dry-run", help="Validate YAML and show plan without registering"),
+    gateway:   str | None = typer.Option(None, "--gateway", help="GA context to register into (default: active context)"),
+) -> None:
+    """
+    Register a resource from a declarative YAML file.
+
+    The YAML must follow the axon/v1 Resource schema:
+
+      apiVersion: axon/v1
+      kind: Resource
+      metadata:
+        name: tavily-search
+        tags: [search, web]
+      spec:
+        description: "..."
+        transport:
+          protocol: mcp_streamable_http
+          endpoint: https://mcp.example.com/mcp/
+        auth:
+          scheme: api_key
+          location: query
+          param: apiKey
+          env_var: MY_API_KEY
+        policy:
+          paid: true
+          cost_per_call: 0.001
+      governance:
+        token: axon_tk_...   # optional admission token
+
+    Supported protocols: mcp_streamable_http, mcp_http, mcp_sse, mcp_stdio.
+    """
+    import secrets as _secrets
+    from axon.ga.config import GAConfig
+    from axon.ga.registry import add_resource as _add_resource
+    from axon.ga.tokens import verify_local, mark_used, TokenVerificationError
+    from axon.types import (
+        A2ASkill, AuthScheme, Resource, ResourceManifest,
+        ResourcePolicy, ResourceStatus, ResourceType,
+        load_resource_yaml,
+    )
+    from axon.validator import validate_mcp
+
+    # 1. load + validate YAML
+    try:
+        spec = load_resource_yaml(yaml_path)
+    except FileNotFoundError as e:
+        fatal(str(e))
+    except Exception as e:
+        fatal(f"Invalid resource YAML: {e}")
+
+    name     = spec.metadata.name
+    binding  = spec.to_protocol_binding()
+    endpoint = spec.spec.transport.endpoint
+    command  = spec.to_command()
+    auth_cfg = spec.to_auth_config()
+    pol      = spec.spec.policy
+    token    = spec.governance.token
+
+    console.print()
+    console.print(info(f"[dim]resource: {name} ({binding.value})[/dim]"))
+    console.print()
+
+    # 2. auth env var check — warn early, before attempting a live connection
+    missing = spec.missing_env_vars()
+    if missing:
+        for var in missing:
+            hint = spec.spec.auth.hint or ""
+            hint_str = f"  [dim]{hint}[/dim]" if hint else ""
+            console.print(warn(f"env var [bold]{var}[/bold] is not set — authentication will fail"))
+            if hint_str:
+                console.print(hint_str)
+        console.print()
+        if not dry_run:
+            raise typer.Exit(1)
+
+    if dry_run:
+        console.print(f"  {step('[yellow]dry-run[/yellow] — skipping live connection and registration')}")
+        console.print(divider())
+        console.print(info(f"name        [dim]{name}[/dim]"))
+        console.print(info(f"protocol    [dim]{binding.value}[/dim]"))
+        if endpoint:
+            console.print(info(f"endpoint    [dim]{endpoint}[/dim]"))
+        if command:
+            console.print(info(f"command     [dim]{' '.join(command)}[/dim]"))
+        auth_scheme = spec.spec.auth.scheme
+        auth_loc    = spec.spec.auth.location
+        auth_display = auth_scheme + (f"/{auth_loc}" if auth_scheme == "api_key" else "")
+        console.print(info(f"auth        [dim]{auth_display}[/dim]"))
+        console.print(info(f"skills      [dim]{len(spec.spec.skills)} declared[/dim]"))
+        pricing_str = "paid" + (f" (${pol.cost_per_call:.4f}/call)" if pol.cost_per_call else "") if pol.paid else "free"
+        console.print(info(f"pricing     [dim]{pricing_str}[/dim]"))
+        console.print(info(f"token       [dim]{token or '—'}[/dim]"))
+        console.print()
+        return
+
+    # 3. build a manifest and run live validation
+    manifest = ResourceManifest(
+        resource_id=f"res-{_secrets.token_hex(3)}",
+        name=name, type=ResourceType.mcp, protocol_binding=binding,
+        description=spec.spec.description, capability_tags=spec.metadata.tags,
+        callable_by="pa_direct", endpoint=endpoint, command=command,
+        auth=auth_cfg,
+    )
+
+    ga = GAConfig.resolve(gateway)
+    console.print(info(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
+    console.print(f"\n  {step(f'Connecting to [cyan]{name}[/cyan] ([dim]{binding.value}[/dim])')}")
+    console.print(divider())
+
+    result = validate_mcp(manifest)
+    if not result.ok:
+        console.print("  [red]■[/red] connect failed\n")
+        for line in (result.error or "").split("\n"):
+            console.print(f"  [dim]{line}[/dim]")
+        console.print()
+        raise typer.Exit(1)
+
+    console.print(f"  {step(f'connected        [green]{len(result.tools)} tools[/green]')}")
+    console.print(divider())
+    console.print(f"  {step(f'fingerprint      [dim]{result.fingerprint}[/dim]')}")
+    console.print(divider())
+
+    # 4. admission token (optional)
+    if token:
+        try:
+            verify_local(token, ga.paths)
+        except TokenVerificationError as e:
+            console.print("  [red]■[/red] admission token rejected\n")
+            console.print(f"  [dim]{e}[/dim]\n")
+            raise typer.Exit(1)
+        console.print(f"  {step('admission token  [green]verified[/green]')}")
+        console.print(divider())
+
+    # 5. build skills — prefer YAML declarations (richer descriptions/examples)
+    #    fall back to live tool specs when YAML has none
+    yaml_skills = spec.spec.skills
+    if yaml_skills:
+        skills = [
+            A2ASkill(
+                id=s.id, name=s.id,
+                description=s.description,
+                tags=spec.metadata.tags,
+                examples=s.examples,
+            )
+            for s in yaml_skills
+        ]
+    else:
+        skills = [
+            A2ASkill(
+                id=s["name"], name=s["name"],
+                description=s["description"] or s["name"],
+                tags=spec.metadata.tags,
+            )
+            for s in result.tool_specs
+        ]
+
+    policy_cfg = ResourcePolicy(
+        is_paid=pol.paid,
+        requires_auth=(auth_cfg.scheme != AuthScheme.none),
+        cost_per_call=pol.cost_per_call,
+    )
+
+    resource = Resource(
+        id=manifest.resource_id, type=ResourceType.mcp, protocol_binding=binding,
+        name=name, endpoint=endpoint, command=command,
+        description=spec.spec.description,
+        skills=skills, fingerprint=result.fingerprint or "",
+        auth=auth_cfg, policy=policy_cfg, token_ref=token,
+        status=ResourceStatus.online,
+    )
+
+    try:
+        _add_resource(resource, ga.paths)
+    except Exception as e:
+        fatal(f"Could not write to registry: {e}")
+
+    if token:
+        try:
+            mark_used(token, resource.id, ga.paths)
+        except Exception:
+            console.print(warn("could not update token status"))
+
+    auth_display = auth_cfg.scheme.value + (f"/{auth_cfg.location.value}" if auth_cfg.scheme == AuthScheme.api_key else "")
+    tools_preview = ", ".join(result.tools[:8]) + (" …" if len(result.tools) > 8 else "")
+    pricing_str = ("paid" + (f" (${pol.cost_per_call:.4f}/call)" if pol.cost_per_call is not None else "")) if pol.paid else "free"
+
+    console.print()
+    console.print(f"  {ok(f'[bold]{name}[/bold] registered')}\n")
+    console.print(info(f"id          [dim]{resource.id}[/dim]"))
+    console.print(info(f"type        [dim]mcp ({binding.value})[/dim]"))
+    console.print(info(f"auth        [dim]{auth_display}[/dim]"))
+    console.print(info(f"pricing     [dim]{pricing_str}[/dim]"))
+    console.print(info(f"tools       [dim]{tools_preview or '—'}[/dim]"))
+    console.print(info(f"skills      [dim]{len(skills)} ({('yaml' if yaml_skills else 'inferred')})[/dim]"))
     if endpoint:
         console.print(info(f"endpoint    [dim]{endpoint}[/dim]"))
     if command:

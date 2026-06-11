@@ -17,7 +17,7 @@ from axon.cli.ga._prompts import pick_retrieval_strategy
 app = typer.Typer()
 
 
-def _bootstrap_files(p: AxonPaths, ga_dir: Path) -> None:
+def _bootstrap_files(p: AxonPaths, ga_dir: Path, ga_name: str) -> None:
     p.makedirs()
 
     gp = GAPaths(ga_dir)
@@ -29,7 +29,7 @@ def _bootstrap_files(p: AxonPaths, ga_dir: Path) -> None:
         p.pa_local_tools:    DEFAULT_LOCAL_TOOLS,
     }
     ga_json_default = {
-        "name":               "Axon Local Gateway",
+        "name":               ga_name,
         "description":        "",
         "organization":       None,
         "trust_level":        "local",
@@ -109,9 +109,11 @@ def init(
         retrieval_strategy, embedding_model = pick_retrieval_strategy(ollama_host=ollama_host)
 
     # monta config
+    ga_context = "axon_default"
+
     local_ga_entry = ConnectedGateway(
         url=f"http://localhost:{ga_port}",
-        name="Axon Local Gateway",
+        name=ga_context,
         version="0.1.0",
         trust_level="local",
         organization="local",
@@ -119,9 +121,9 @@ def init(
     pa = pa.model_copy(update={"gateways": [local_ga_entry]})
 
     ga_instance = GAInstanceConfig(
-        name="Axon Local Gateway",
+        name=ga_context,
         port=ga_port,
-        data_dir=f"{data_dir}/ga/default",
+        data_dir=f"{data_dir}/ga/{ga_context}",
         retrieval_strategy=retrieval_strategy,
         embedding_model=embedding_model,
     )
@@ -129,8 +131,8 @@ def init(
     config = AxonConfig(
         pa=pa,
         data_dir=data_dir,
-        gateways={"default": ga_instance},
-        current_gateway="default",
+        gateways={ga_context: ga_instance},
+        current_gateway=ga_context,
     )
 
     try:
@@ -140,12 +142,12 @@ def init(
 
     cwd    = Path.cwd()
     p      = AxonPaths(resolve_data_dir(data_dir, cwd))
-    ga_dir = Path(data_dir) / "ga" / "default"
+    ga_dir = Path(data_dir) / "ga" / ga_context
     if not ga_dir.is_absolute():
         ga_dir = cwd / ga_dir
 
     try:
-        _bootstrap_files(p, ga_dir)
+        _bootstrap_files(p, ga_dir, ga_context)
     except Exception as e:
         fatal(f"Could not create data directory structure: {e}")
 
@@ -166,9 +168,9 @@ def init(
         console.print()
     console.print(f"  [dim]data dir[/dim]  [cyan]{rel}[/cyan]")
     console.print()
-    console.print(f"  {step(f'[dim]{rel}/ga/registry.json[/dim]')}")
+    console.print(f"  {step(f'[dim]{rel}/ga/{ga_context}/registry.json[/dim]')}")
     console.print(divider())
-    console.print(f"  {step(f'[dim]{rel}/ga/tokens.json[/dim]')}")
+    console.print(f"  {step(f'[dim]{rel}/ga/{ga_context}/tokens.json[/dim]')}")
     console.print(divider())
     console.print(f"  {step(f'[dim]{rel}/pa/sessions/[/dim]')}")
     console.print(divider())
