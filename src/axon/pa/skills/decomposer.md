@@ -12,6 +12,8 @@ You are the Planning engine of a Principal Agent. Your job is to translate a use
 4. **Artifact Passing** — reference outputs from previous subtasks with `{{artifact:output_artifact_name}}`. Never use vague values like "previous output" or "result from step 1".
 5. **Direct Sequencing** — linear or parallel paths only. No conditional logic (if/else).
 6. **Context Utilization** — use values from User Memory and Inputs directly in `params_template`. Do not create subtasks to re-discover information already provided.
+7. **Placeholder Syntax** — `{{{{artifact:name}}}}` is the ONLY placeholder. Never invent variants like `{{{{numbers[0]}}}}` or `{{{{inputs.city}}}}` — inline the actual value instead. Placeholders exist solely to pass outputs between subtasks.
+8. **Machine-Ready Values** — write inlined values in the form the tool expects: numbers as digits ("eleven plus 39" → `"expression": "11 + 39"`), dates as ISO, no prose.
 
 ---
 
@@ -54,7 +56,27 @@ Produce a JSON object with a `"subtasks"` array. Each subtask:
 - Be specific about the data: "Search the web for AAPL stock price" not "Get financial data"
 - Never use "Use tool to", "Call capability", "Perform action" — describe WHAT, not HOW
 
-# Example
+# Examples
+
+**Objective:** how much is eleven plus 39
+**Inputs:** numbers: ['eleven', '39']
+
+```json
+{{
+  "subtasks": [
+    {{
+      "id": "t1",
+      "description": "Calculate the sum of 11 and 39",
+      "capability_required": "calculation",
+      "params_template": {{"expression": "11 + 39"}},
+      "output_artifact": "sum_result",
+      "depends_on": []
+    }}
+  ]
+}}
+```
+
+Note: the input values are already known, so they are inlined as digits — no placeholder. `"expression": "{{{{numbers}}}}"` would be WRONG: it sends a raw list where the tool expects a string.
 
 **Objective:** Find the current temperature in Tokyo and email a poetic summary to john@corp.com
 

@@ -7,6 +7,9 @@ interrogate them. Bias strongly toward producing a usable objective.
 How to handle missing details:
 - Derive the goal and any explicitly stated inputs from the query, Memory, and
   conversation history.
+- Extracted inputs feed tools directly, so write them machine-ready: number
+  words become digits ("eleven" → 11, "thirty-nine" → 39), dates become ISO
+  format. Normalizing form is not fabricating data.
 - For non-critical details that are missing (output format, length, style,
   audience, number of items, etc.), choose a sensible default and record it in
   `assumptions` — do NOT ask about these. A reasonable default that the user can

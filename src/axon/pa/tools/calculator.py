@@ -73,7 +73,9 @@ class _SafeEval(ast.NodeVisitor):
     def visit_Name(self, node):
         val = _SAFE_FUNCS.get(node.id)
         if val is None:
-            raise ValueError(f"Name not allowed: {node.id}")
+            raise ValueError(
+                f"Unknown identifier '{node.id}' — write numbers as digits (11, not 'eleven')"
+            )
         return val
 
     def generic_visit(self, node):

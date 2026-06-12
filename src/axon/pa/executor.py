@@ -39,8 +39,13 @@ from axon.pa.ga_affinity import GAAffinityStore
 from axon.pa.models import Fact, Failure, Provenance, SubtaskStatus
 from axon.types import ResourceType
 
-# {{artifact:nome}} — placeholder do ReWOO resolvido pelo output de um Fact
-_ARTIFACT_RE = re.compile(r"\{\{\s*artifact:([^}]+?)\s*\}\}")
+# {{artifact:nome}} — placeholder canônico do ReWOO, resolvido pelo output de um
+# Fact. A regex aceita qualquer {{expr}} porque o LLM às vezes inventa variantes
+# ({{numbers[0]}}, {{inputs.cidade}}): todas resolvem pela mesma precedência
+# (artifact → input do objetivo) com acessores [idx] / ["chave"] / .chave.
+# Placeholder irresolúvel é ParamResolutionError — nunca chega cru ao recurso.
+_PLACEHOLDER_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+_ACCESSOR_RE    = re.compile(r"\[\s*(?:(\d+)|'([^']*)'|\"([^\"]*)\")\s*\]|\.([A-Za-z_]\w*)")
 
 if TYPE_CHECKING:
     from axon.pa.models import AgentState, ResolverResult, Subtask
@@ -55,7 +60,7 @@ class ExecutorError(Exception):
 
 
 class ParamResolutionError(Exception):
-    """Um placeholder {{artifact:nome}} não pôde ser resolvido (Step 4)."""
+    """Um placeholder {{...}} não pôde ser resolvido (Step 4 — fail-fast)."""
 
 
 class Executor:
@@ -280,15 +285,58 @@ class Executor:
         return value
 
     def _resolve_str(self, text: str, state: "AgentState") -> Any:
-        whole = _ARTIFACT_RE.fullmatch(text.strip())
+        whole = _PLACEHOLDER_RE.fullmatch(text.strip())
         if whole:
             # valor é só o placeholder → devolve o objeto cru (dict/list/etc.)
-            return self._artifact(whole.group(1).strip(), state)
+            return self._placeholder(whole.group(1).strip(), state)
         # placeholders embutidos numa string → interpola como texto
         def _sub(m: re.Match) -> str:
-            val = self._artifact(m.group(1).strip(), state)
+            val = self._placeholder(m.group(1).strip(), state)
             return val if isinstance(val, str) else json.dumps(val, default=str, ensure_ascii=False)
-        return _ARTIFACT_RE.sub(_sub, text)
+        return _PLACEHOLDER_RE.sub(_sub, text)
+
+    def _placeholder(self, expr: str, state: "AgentState") -> Any:
+        """
+        Resolve uma expressão de placeholder: nome base + acessores opcionais.
+
+            artifact:patient_data   → _artifact("patient_data")
+            numbers[0]              → _artifact("numbers")[0]
+            paciente.nome           → _artifact("paciente")["nome"]
+
+        O prefixo 'artifact:' é opcional — a precedência (Fact → input do
+        objetivo) é a mesma com ou sem ele.
+
+        Raises:
+            ParamResolutionError: sintaxe inválida ou acesso a índice/chave
+            inexistente — a subtask falha aqui, antes de gastar uma chamada.
+        """
+        if expr.startswith("artifact:"):
+            expr = expr[len("artifact:"):].strip()
+
+        base = re.match(r"[A-Za-z_][\w\-]*", expr)
+        if base is None:
+            raise ParamResolutionError(f"unresolvable placeholder '{{{{{expr}}}}}'")
+
+        value = self._artifact(base.group(0), state)
+
+        pos = base.end()
+        while pos < len(expr):
+            acc = _ACCESSOR_RE.match(expr, pos)
+            if acc is None:
+                raise ParamResolutionError(
+                    f"invalid accessor '{expr[pos:]}' in placeholder '{{{{{expr}}}}}'"
+                )
+            idx, k1, k2, attr = acc.groups()
+            key: Any = int(idx) if idx is not None else (k1 or k2 or attr)
+            try:
+                value = value[key]
+            except (KeyError, IndexError, TypeError) as e:
+                raise ParamResolutionError(
+                    f"cannot access '{key}' in placeholder '{{{{{expr}}}}}': {e}"
+                ) from e
+            pos = acc.end()
+
+        return value
 
     def _artifact(self, name: str, state: "AgentState") -> Any:
         """
