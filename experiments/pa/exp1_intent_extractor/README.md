@@ -77,6 +77,9 @@ uv run experiments/pa/exp1_intent_extractor/run.py
 
 # different model / save per-case details
 uv run experiments/pa/exp1_intent_extractor/run.py --model llama3.1:8b --save
+
+# run a single case file
+uv run experiments/pa/exp1_intent_extractor/run.py --cases fun.json
 ```
 
 > **Note:** Results depend on the LLM. The reference run below used
@@ -91,20 +94,23 @@ uv run experiments/pa/exp1_intent_extractor/run.py --model llama3.1:8b --save
   ──────────────────────────────────────────────────────────────────────────────
   ID        Query                              Skill          Expected  Result
   ──────────────────────────────────────────────────────────────────────────────
-  na_01     look up the medical record of pa…  hospital.md    READY     ✓  all
-  na_02     check for drug interactions betw…  hospital.md    READY     ✓  all
-  na_03     send the discharge summary of pa…  hospital.md    READY     ✓  all
-  na_04     draft a legal opinion on service…  legal_firm.md  READY     ✓  all
-  na_05     review contract 2026-047 for LGP…  legal_firm.md  READY     ✓  all
-  na_06     create a 5-slide pitch deck abou…  —              READY     ✓  all
   amb_01    help with João                     hospital.md    CLARIFY   ✓  1
   amb_02    generate the report                hospital.md    READY     ✓  all
   amb_03    generate the report                —              CLARIFY   ✓  1
   amb_04    review the contract                legal_firm.md  READY     ✓  —
   amb_05    review the contract                —              CLARIFY   ✓  1
   amb_06    help me with my project            —              CLARIFY   ✓  1
+  fun_01    presentation about ducks for kids  duck_studio.md READY     ✓  all
+  fun_02    the usual                          duck_studio.md READY     ✓  all
+  fun_03    the usual                          —              CLARIFY   ✓  1
+  na_01     look up the medical record of pa…  hospital.md    READY     ✓  all
+  na_02     check for drug interactions betw…  hospital.md    READY     ✓  all
+  na_03     send the discharge summary of pa…  hospital.md    READY     ✓  all
+  na_04     draft a legal opinion on service…  legal_firm.md  READY     ✓  all
+  na_05     review contract 2026-047 for LGP…  legal_firm.md  READY     ✓  all
+  na_06     create a 5-slide pitch deck abou…  —              READY     ✓  all
   ──────────────────────────────────────────────────────────────────────────────
-  12/12 passed
+  15/15 passed
 ```
 
 Result column: for READY, `all` means every expected value was found in the
@@ -140,14 +146,43 @@ rule surviving the domain extension intact.
 
 ---
 
+## The duck domain — domain-agnosticism, demonstrated
+
+`skills/duck_studio.md` is deliberately silly: a kids' edutainment studio
+whose defaults include *"at least one duck pun per slide (non-negotiable
+studio policy)"* and a mascot named Captain Quackbeard. It exists to prove
+the mechanism is domain-agnostic — the same machinery that resolves hospital
+defaults resolves duck puns:
+
+```
+fun_01  "presentation about ducks for kids"  → READY
+        assumptions: 5 slides, rubber-duck yellow theme, duck puns included
+fun_02  "the usual"                          → READY
+        goal: create a duck facts presentation for ducklings (ages 4–6)
+fun_03  "the usual" (no skill)               → CLARIFY
+```
+
+> **Note:** The dumb example earned its keep. The first run of `fun_03`
+> exposed a real gap in the base skill: "the usual" with no skill produced
+> the hallucinated goal *"Proceed with the usual task as per standard
+> procedures"*. The base `intent_extraction.md` now has explicit rules for
+> unresolvable references — routines ("the usual") and definite references
+> with no referent ("the contract", "the report") must trigger clarification
+> instead of a generic invented goal. Both rules defer to domain context, so
+> a skill that *defines* "the usual" (like Quack Studios does) still wins.
+
+---
+
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `skills/hospital.md` | Clinical domain: entities, defaults (PDF, responsible physician), intent interpretations |
 | `skills/legal_firm.md` | Legal domain: entities, defaults (DOCX, responsible partner, LGPD), intent interpretations |
+| `skills/duck_studio.md` | Deliberately silly domain — proves the mechanism is domain-agnostic |
 | `cases/non_ambiguous.json` | 6 fully-specified queries — must be READY in every configuration |
 | `cases/ambiguous.json` | 6 underspecified queries — contrast pairs with/without skill |
+| `cases/fun.json` | 3 duck cases, including the "the usual" contrast pair |
 | `results/run_*.json` | Per-case details: full Objective, latency, missing values (with `--save`) |
 
 ---
