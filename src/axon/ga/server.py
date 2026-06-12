@@ -198,7 +198,7 @@ async def pa_connect(req: ConnectRequest) -> dict:
 class SearchRequest(BaseModel):
     query:        str
     capabilities: list[str] = []
-    max_results:  int        = 5
+    max_results:  int        = 3
 
 
 @app.post("/ga/resources/search")

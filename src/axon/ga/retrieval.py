@@ -4,7 +4,8 @@ ga/retrieval.py — Matching semântico de recursos.
 Dois modos configurados via GAInstanceConfig.retrieval_strategy:
 
   "keyword"   — MVP sem dependências externas.
-                Score por keyword matching em tags, description e nome.
+                Ranking lexical via BM25 (Okapi) sobre nome, description,
+                skills e tags.
 
   "embedding" — Embedding via Ollama (nomic-embed-text, mxbai-embed-large, etc.)
                 Indexação no startup, cosine similarity em cada search.
@@ -17,33 +18,77 @@ Interface pública (idêntica nos dois modos):
 from __future__ import annotations
 
 import math
+import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Literal
-
+from axon.config import GAPaths
 from axon.types import Resource
 
 
 # ---------------------------------------------------------------------------
-#   Helpers de score
+#   BM25 (Okapi) — ranking lexical do modo "keyword"
 # ---------------------------------------------------------------------------
 
-def _keyword_score(query: str, resource: Resource) -> float:
-    q = query.lower()
-    s = 0.0
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
-    for skill in resource.skills:
-        for tag in skill.tags:
-            if tag.lower() in q:
-                s += 1.0
-        if q in skill.description.lower():
-            s += 0.5
 
-    if q in resource.description.lower():
-        s += 1.0
-    if q in resource.name.lower():
-        s += 0.5
+def _tokenize(text: str) -> list[str]:
+    return _TOKEN_RE.findall(text.lower())
 
-    return s
+
+@dataclass
+class _BM25Index:
+    """
+    Índice BM25 construído uma vez sobre o texto dos recursos.
+
+    score(D, Q) = Σ_q IDF(q) · f(q,D)·(k1+1) / (f(q,D) + k1·(1 - b + b·|D|/avgdl))
+
+    IDF usa a variante não-negativa (estilo Lucene):
+      IDF(q) = ln(1 + (N - df(q) + 0.5) / (df(q) + 0.5))
+
+    k1 controla a saturação da frequência do termo; b controla a
+    normalização pelo tamanho do documento (defaults clássicos: 1.5 / 0.75).
+    """
+    k1:        float = 1.5
+    b:         float = 0.75
+    doc_freqs: list[Counter[str]] = field(default_factory=list)   # f(q, D) por recurso
+    doc_lens:  list[int]          = field(default_factory=list)
+    avgdl:     float              = 1.0
+    idf:       dict[str, float]   = field(default_factory=dict)
+
+    @classmethod
+    def build(cls, documents: list[str], k1: float = 1.5, b: float = 0.75) -> "_BM25Index":
+        index = cls(k1=k1, b=b)
+        df: Counter[str] = Counter()
+
+        for doc in documents:
+            tokens = _tokenize(doc)
+            freqs  = Counter(tokens)
+            index.doc_freqs.append(freqs)
+            index.doc_lens.append(len(tokens))
+            df.update(freqs.keys())
+
+        n = len(documents)
+        index.avgdl = (sum(index.doc_lens) / n) if n else 1.0
+        index.idf   = {
+            term: math.log(1.0 + (n - freq + 0.5) / (freq + 0.5))
+            for term, freq in df.items()
+        }
+        return index
+
+    def score(self, query: str, doc_index: int) -> float:
+        freqs   = self.doc_freqs[doc_index]
+        doc_len = self.doc_lens[doc_index]
+        norm    = self.k1 * (1.0 - self.b + self.b * doc_len / (self.avgdl or 1.0))
+
+        s = 0.0
+        for term in _tokenize(query):
+            f = freqs.get(term, 0)
+            if f == 0:
+                continue
+            s += self.idf.get(term, 0.0) * f * (self.k1 + 1.0) / (f + norm)
+        return s
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -103,6 +148,7 @@ class EmbeddingIndex:
     resources: list[Resource]                    = field(default_factory=list)
     vectors:   dict[str, list[float]]            = field(default_factory=dict)  # resource.id → vetor
     embedder:  OllamaEmbedder | None             = None
+    bm25:      _BM25Index | None                 = None
 
     @classmethod
     def build(
@@ -115,10 +161,12 @@ class EmbeddingIndex:
         """
         Constrói o índice a partir dos recursos do registry.
 
-        keyword:   sem vetores — score calculado em tempo de busca
+        keyword:   índice BM25 sobre o texto dos recursos (sem deps externas)
         embedding: gera vetor para cada recurso via Ollama no startup
+                   (o índice BM25 também é construído — fallback do embedding)
         """
         index = cls(strategy=strategy, resources=list(resources))
+        index._build_bm25()
 
         if strategy == "embedding":
             if not embed_model:
@@ -130,6 +178,10 @@ class EmbeddingIndex:
             index._index_resources()
 
         return index
+
+    def _build_bm25(self) -> None:
+        """Constrói o índice BM25 — barato, sempre disponível como fallback."""
+        self.bm25 = _BM25Index.build([_resource_text(r) for r in self.resources])
 
     def _index_resources(self) -> None:
         """Gera e armazena vetores para todos os recursos."""
@@ -150,6 +202,7 @@ class EmbeddingIndex:
     def reindex(self, resources: list[Resource]) -> None:
         """Re-indexa após mudanças no registry (novo registro, remoção)."""
         self.resources = list(resources)
+        self._build_bm25()
         if self.strategy == "embedding":
             self.vectors = {}
             self._index_resources()
@@ -181,11 +234,18 @@ class EmbeddingIndex:
         top_k:     int,
         threshold: float,
     ) -> list[tuple[Resource, float]]:
+        """
+        Ranking BM25. Score 0 significa que nenhum termo da query aparece
+        no recurso — esses são sempre descartados, mesmo com threshold 0.
+        """
+        if self.bm25 is None:
+            self._build_bm25()
+
         scored = [
-            (r, _keyword_score(query, r))
-            for r in self.resources
+            (r, self.bm25.score(query, i))
+            for i, r in enumerate(self.resources)
         ]
-        scored = [(r, s) for r, s in scored if s >= threshold]
+        scored = [(r, s) for r, s in scored if s > 0 and s >= threshold]
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:top_k]
 
