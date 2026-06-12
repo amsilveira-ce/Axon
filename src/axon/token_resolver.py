@@ -123,6 +123,32 @@ class TokenResolverError(Exception):
     """Raised quando o token é necessário mas não está configurado."""
 
 
+class TokenResolver:
+    """
+    Wrapper OO sobre a resolução de credencial — retorna o token CRU.
+
+    Usado pelo A2AClient (ManifestCredentialService): o AuthInterceptor do
+    SDK A2A monta o header ("Bearer {token}") por conta própria, então aqui
+    devolvemos apenas o segredo, sem esquema. Para chamadas MCP use
+    resolve(), que devolve ResolvedAuth já formatado por location/scheme.
+    """
+
+    def resolve(self, manifest: ResourceManifest) -> str | None:
+        auth = manifest.auth
+        if auth.scheme in (AuthScheme.none, AuthScheme.oauth):
+            return None
+        _ensure_dotenv()
+        env_var = auth.env_var or _infer_env_var(manifest.name)
+        token   = os.environ.get(env_var)
+        if not token:
+            logger.warning(
+                "[TokenResolver] token not configured for '%s' — set %s",
+                manifest.name, env_var,
+            )
+            return None
+        return token
+
+
 def resolve(manifest: ResourceManifest) -> ResolvedAuth | None:
     """
     Resolve o token de autenticação para um ResourceManifest.
