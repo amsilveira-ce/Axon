@@ -21,6 +21,8 @@ pocs/**/.env
 pocs/**/venv/
 pocs/**/.venv/
 
+experiments/ga/exp2_retrieval/results/
+
 # Distribution / packaging
 .Python
 build/

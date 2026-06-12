@@ -29,7 +29,7 @@ import secrets
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-
+from axon.config import GAPaths
 sys.path.insert(0, str(Path(__file__).parents[3] / "src"))
 
 import tempfile

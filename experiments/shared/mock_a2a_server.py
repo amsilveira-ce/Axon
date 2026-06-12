@@ -58,6 +58,7 @@ class MockA2AServer:
     def stop(self) -> None:
         if self._server:
             self._server.shutdown()
+            self._server.server_close()   # libera a porta — permite restart no mesmo port
             self._server = None
 
     def __enter__(self) -> "MockA2AServer":
