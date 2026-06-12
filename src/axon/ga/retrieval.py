@@ -8,7 +8,8 @@ Dois modos configurados via GAInstanceConfig.retrieval_strategy:
                 skills e tags.
 
   "embedding" — Embedding via Ollama (nomic-embed-text, mxbai-embed-large, etc.)
-                Indexação no startup, cosine similarity em cada search.
+                Multi-vetor: um embedding por skill, score por max-pooling.
+                Task prefixes aplicados por modelo (search_query/search_document).
                 Modelo configurado em GAInstanceConfig.embedding_model.
 
 Interface pública (idêntica nos dois modos):
@@ -32,9 +33,19 @@ from axon.types import Resource
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
+# Function words sem valor discriminativo. Sem isso, uma query fora de escopo
+# como "what's the weather" pontua > 0 só por conter "the" — e nunca é filtrada.
+_STOPWORDS = frozenset("""
+    a an the and or but if is are was were be been being do does did has have
+    had to of in on at by for with from as into about this that these those it
+    its my our your their i we you they he she his her them him us me what
+    which who when where how why can could should would will may might must
+    so some any not no up out over s t d ll re ve
+""".split())
+
 
 def _tokenize(text: str) -> list[str]:
-    return _TOKEN_RE.findall(text.lower())
+    return [t for t in _TOKEN_RE.findall(text.lower()) if t not in _STOPWORDS]
 
 
 @dataclass
@@ -98,6 +109,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 def _resource_text(resource: Resource) -> str:
+    """Texto único por recurso — usado pelo índice BM25."""
     parts = [resource.name, resource.description]
     for skill in resource.skills:
         parts.append(skill.description)
@@ -105,22 +117,52 @@ def _resource_text(resource: Resource) -> str:
     return " ".join(parts)
 
 
+def _skill_texts(resource: Resource) -> list[str]:
+    """
+    Textos por skill — usados pelo índice de embeddings (multi-vetor).
+
+    Embedar cada skill separadamente evita que recursos com muitas skills
+    diluam o sinal num blob único; o score do recurso é o máximo entre
+    seus vetores (max-pooling), prática padrão em dense retrieval.
+    """
+    texts = [f"{resource.name}: {resource.description}"]
+    for s in resource.skills or []:
+        texts.append(
+            f"{resource.name} — {s.id}: {s.description} tags: {', '.join(s.tags)}"
+        )
+    return texts
+
+
 # ---------------------------------------------------------------------------
 #   OllamaEmbedder
 # ---------------------------------------------------------------------------
 
+# Modelos de embedding treinados com task prefixes rendem scores muito
+# melhores quando o prefixo correto é usado em queries vs documentos.
+_TASK_PREFIXES: dict[str, tuple[str, str]] = {
+    # model substring → (query_prefix, document_prefix)
+    "nomic-embed": ("search_query: ", "search_document: "),
+    "mxbai-embed": ("Represent this sentence for searching relevant passages: ", ""),
+}
+
+
 class OllamaEmbedder:
-    """Gera embeddings via POST /api/embed."""
+    """Gera embeddings via POST /api/embed, com task prefix por modelo."""
 
     def __init__(self, host: str, model: str) -> None:
         self._host  = host.rstrip("/")
         self._model = model
+        self._query_prefix, self._doc_prefix = next(
+            (p for key, p in _TASK_PREFIXES.items() if key in model),
+            ("", ""),
+        )
 
-    def embed(self, text: str) -> list[float]:
+    def embed(self, text: str, kind: Literal["query", "document"] = "document") -> list[float]:
         import httpx
+        prefix = self._query_prefix if kind == "query" else self._doc_prefix
         resp = httpx.post(
             f"{self._host}/api/embed",
-            json={"model": self._model, "input": text},
+            json={"model": self._model, "input": prefix + text},
             timeout=30.0,
         )
         resp.raise_for_status()
@@ -146,7 +188,8 @@ class EmbeddingIndex:
     """
     strategy:  Literal["keyword", "embedding"]
     resources: list[Resource]                    = field(default_factory=list)
-    vectors:   dict[str, list[float]]            = field(default_factory=dict)  # resource.id → vetor
+    # resource.id → vetores (um por skill + um do recurso) — score por max-pooling
+    vectors:   dict[str, list[list[float]]]      = field(default_factory=dict)
     embedder:  OllamaEmbedder | None             = None
     bm25:      _BM25Index | None                 = None
 
@@ -184,7 +227,7 @@ class EmbeddingIndex:
         self.bm25 = _BM25Index.build([_resource_text(r) for r in self.resources])
 
     def _index_resources(self) -> None:
-        """Gera e armazena vetores para todos os recursos."""
+        """Gera e armazena um vetor por skill de cada recurso (multi-vetor)."""
         if self.embedder is None:
             return
 
@@ -192,10 +235,14 @@ class EmbeddingIndex:
         logger = logging.getLogger(__name__)
 
         for r in self.resources:
-            text = _resource_text(r)
             try:
-                self.vectors[r.id] = self.embedder.embed(text)
-                logger.debug("[Retrieval] indexed %s (%d dims)", r.name, len(self.vectors[r.id]))
+                self.vectors[r.id] = [
+                    self.embedder.embed(text, kind="document")
+                    for text in _skill_texts(r)
+                ]
+                logger.debug(
+                    "[Retrieval] indexed %s (%d vectors)", r.name, len(self.vectors[r.id])
+                )
             except Exception as e:
                 logger.warning("[Retrieval] failed to index %s: %s", r.name, e)
 
@@ -259,7 +306,7 @@ class EmbeddingIndex:
             return []
 
         try:
-            query_vec = self.embedder.embed(query)
+            query_vec = self.embedder.embed(query, kind="query")
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(
@@ -269,10 +316,11 @@ class EmbeddingIndex:
 
         scored = []
         for r in self.resources:
-            vec = self.vectors.get(r.id)
-            if vec is None:
+            vecs = self.vectors.get(r.id)
+            if not vecs:
                 continue
-            score = _cosine(query_vec, vec)
+            # max-pooling: o recurso é tão relevante quanto sua skill mais próxima
+            score = max(_cosine(query_vec, v) for v in vecs)
             if score >= threshold:
                 scored.append((r, score))
 

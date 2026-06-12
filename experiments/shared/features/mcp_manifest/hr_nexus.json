@@ -1,0 +1,32 @@
+{
+  "name": "hr-nexus",
+  "description": "Human resources management tool. Manages employee records, payroll processing, vacation balances, benefits enrollment and onboarding workflows for new hires. Integrates with corporate directory and time-tracking systems.",
+  "transport": "http",
+  "endpoint": "http://localhost:8043",
+  "auth_scheme": "api_key",
+  "auth_env_var": "AXON_SECRET_HR_NEXUS",
+  "is_paid": false,
+  "cost_per_call": null,
+  "tags": [
+    "hr", "human-resources", "employee", "payroll", "vacation",
+    "benefits", "onboarding", "new-hire", "time-off", "leave",
+    "compensation", "directory", "people"
+  ],
+  "tools": [
+    {
+      "name": "get_employee_record",
+      "description": "Returns the employee profile including role, department, manager, hire date and compensation band.",
+      "tags": ["employee", "record", "profile", "department", "role", "manager"]
+    },
+    {
+      "name": "check_vacation_balance",
+      "description": "Returns remaining vacation days, accrual rate and scheduled time off for an employee.",
+      "tags": ["vacation", "time-off", "balance", "leave", "pto", "days"]
+    },
+    {
+      "name": "start_onboarding",
+      "description": "Creates an onboarding workflow for a new hire including equipment requests, account provisioning, paperwork and first-week schedule.",
+      "tags": ["onboarding", "new-hire", "first-week", "equipment", "accounts", "paperwork"]
+    }
+  ]
+}

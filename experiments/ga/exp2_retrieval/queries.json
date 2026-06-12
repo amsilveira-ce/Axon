@@ -1,0 +1,193 @@
+{
+  "description": "25 queries testing semantic retrieval across 11 registered resources. Direct queries (1-10) carry capability tags — the way the PA decomposer posts to the GA when it extracted a good tag; the GA filters by skill-tag intersection before ranking. Paraphrase queries (11-20) send empty capabilities to test pure ranking generalization. Out-of-scope queries (21-25) must return no results.",
+  "resources": [
+    "code-review-agent",
+    "incident-manager-agent",
+    "documentation-agent",
+    "health-search",
+    "medical-mcp",
+    "resend",
+    "legal-compass",
+    "climate-intelligence",
+    "finance-oracle",
+    "hr-nexus",
+    "supply-chain-tracker"
+  ],
+  "queries": [
+    {
+      "id": 1,
+      "query": "review source code for bugs",
+      "capabilities": ["code-review", "code"],
+      "expected": "code-review-agent",
+      "category": "direct"
+    },
+    {
+      "id": 2,
+      "query": "classify this production incident by severity and impact",
+      "capabilities": ["incident", "triage"],
+      "expected": "incident-manager-agent",
+      "category": "direct"
+    },
+    {
+      "id": 3,
+      "query": "generate a README file for my open source project",
+      "capabilities": ["readme", "documentation"],
+      "expected": "documentation-agent",
+      "category": "direct"
+    },
+    {
+      "id": 4,
+      "query": "search for a patient and get their clinical profile",
+      "capabilities": ["patient", "search"],
+      "expected": "health-search",
+      "category": "direct"
+    },
+    {
+      "id": 5,
+      "query": "check drug interactions between two medications",
+      "capabilities": ["interactions", "drugs"],
+      "expected": "medical-mcp",
+      "category": "direct"
+    },
+    {
+      "id": 6,
+      "query": "send a transactional email and confirm delivery",
+      "capabilities": ["email", "send"],
+      "expected": "resend",
+      "category": "direct"
+    },
+    {
+      "id": 7,
+      "query": "check LGPD compliance for our data processing activity",
+      "capabilities": ["compliance", "lgpd"],
+      "expected": "legal-compass",
+      "category": "direct"
+    },
+    {
+      "id": 8,
+      "query": "get carbon emissions data for a company sector",
+      "capabilities": ["emissions", "carbon"],
+      "expected": "climate-intelligence",
+      "category": "direct"
+    },
+    {
+      "id": 9,
+      "query": "get real-time market data for a stock ticker",
+      "capabilities": ["market", "ticker"],
+      "expected": "finance-oracle",
+      "category": "direct"
+    },
+    {
+      "id": 10,
+      "query": "track a shipment by container ID across freight carriers",
+      "capabilities": ["tracking", "shipment"],
+      "expected": "supply-chain-tracker",
+      "category": "direct"
+    },
+    {
+      "id": 11,
+      "query": "flag the risky parts of this function",
+      "capabilities": [],
+      "expected": "code-review-agent",
+      "category": "paraphrase"
+    },
+    {
+      "id": 12,
+      "query": "who should I wake up at 3am when production goes down",
+      "capabilities": [],
+      "expected": "incident-manager-agent",
+      "category": "paraphrase"
+    },
+    {
+      "id": 13,
+      "query": "write a guide for installing and running this project locally",
+      "capabilities": [],
+      "expected": "documentation-agent",
+      "category": "paraphrase"
+    },
+    {
+      "id": 14,
+      "query": "what has the doctor prescribed for Mr. Silva",
+      "capabilities": [],
+      "expected": "health-search",
+      "category": "paraphrase"
+    },
+    {
+      "id": 15,
+      "query": "is it safe to take ibuprofen together with warfarin",
+      "capabilities": [],
+      "expected": "medical-mcp",
+      "category": "paraphrase"
+    },
+    {
+      "id": 16,
+      "query": "let Francisco know his appointment has been confirmed",
+      "capabilities": [],
+      "expected": "resend",
+      "category": "paraphrase"
+    },
+    {
+      "id": 17,
+      "query": "does storing our customers' CPF numbers violate privacy rules",
+      "capabilities": [],
+      "expected": "legal-compass",
+      "category": "paraphrase"
+    },
+    {
+      "id": 18,
+      "query": "how exposed is our coastal plant to extreme heat events",
+      "capabilities": [],
+      "expected": "climate-intelligence",
+      "category": "paraphrase"
+    },
+    {
+      "id": 19,
+      "query": "should we lend money to this struggling company",
+      "capabilities": [],
+      "expected": "finance-oracle",
+      "category": "paraphrase"
+    },
+    {
+      "id": 20,
+      "query": "set up everything for the new hire's first week",
+      "capabilities": [],
+      "expected": "hr-nexus",
+      "category": "paraphrase"
+    },
+    {
+      "id": 21,
+      "query": "how do I fix a leaking kitchen faucet",
+      "capabilities": [],
+      "expected": null,
+      "category": "out-of-scope"
+    },
+    {
+      "id": 22,
+      "query": "what year did the Berlin Wall fall",
+      "capabilities": [],
+      "expected": null,
+      "category": "out-of-scope"
+    },
+    {
+      "id": 23,
+      "query": "play some relaxing jazz music for the evening",
+      "capabilities": [],
+      "expected": null,
+      "category": "out-of-scope"
+    },
+    {
+      "id": 24,
+      "query": "teach me a good opening strategy for chess",
+      "capabilities": [],
+      "expected": null,
+      "category": "out-of-scope"
+    },
+    {
+      "id": 25,
+      "query": "recommend a good pizza place near my house",
+      "capabilities": [],
+      "expected": null,
+      "category": "out-of-scope"
+    }
+  ]
+}
