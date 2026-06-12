@@ -4,11 +4,11 @@ import logging
 
 import typer
 
-from axon.cli._print import console, fatal, ok, info, step, divider, hint, setup_logging
+from axon.cli._print import console, fatal, ok, line, step, divider, hint, setup_logging
 
 logger = logging.getLogger(__name__)
 
-app = typer.Typer(help="Inspect a Principal Agent run (persisted AgentState trace).")
+app = typer.Typer()
 
 _STATUS_STYLE = {
     "completed": "green",
@@ -39,7 +39,14 @@ def inspect(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show extra logging."),
 ) -> None:
-    """Render the OBJECTIVE, PLAN, FACTS and BUDGET of a recorded run."""
+    """
+    Render the objective, plan, facts and budget of a recorded run.
+
+    Every 'axon pa run' persists its full AgentState as a trace. This
+    command replays the most recent one — or a specific run via
+    --session and --request — showing what the agent understood,
+    planned, executed and spent.
+    """
     setup_logging(verbose)
 
     from axon.config import read_config, paths
@@ -98,21 +105,21 @@ def inspect(
 def _render(state, session: str, run_count: int) -> None:
     console.print()
     console.print(f"  {ok('[bold]run trace[/bold]')}")
-    console.print(info(f"[dim]session: {session}  ·  request: {state.request_id}  ·  {run_count} run(s) in session[/dim]"))
+    console.print(line(f"[dim]session: {session}  ·  request: {state.request_id}  ·  {run_count} run(s) in session[/dim]"))
     console.print()
 
     # OBJECTIVE
-    console.print(f"  {step('[bold]OBJECTIVE[/bold]')}")
+    console.print(f"  {step('[bold]objective[/bold]')}")
     if state.objective is not None:
-        console.print(info(f"goal:    {state.objective.goal}"))
+        console.print(line(f"goal:    {state.objective.goal}"))
         if state.objective.success_definition:
-            console.print(info(f"success: {state.objective.success_definition}"))
+            console.print(line(f"success: {state.objective.success_definition}"))
     else:
-        console.print(info("[dim](no objective)[/dim]"))
+        console.print(line("[dim](no objective)[/dim]"))
     console.print(divider())
 
     # PLAN
-    console.print(f"  {step('[bold]PLAN[/bold]')}")
+    console.print(f"  {step('[bold]plan[/bold]')}")
     subtasks = state.plan.subtasks if state.plan else []
     if subtasks:
         id_w  = max(len(s.id) for s in subtasks)
@@ -121,20 +128,20 @@ def _render(state, session: str, run_count: int) -> None:
             status = state.progress.get(s.id)
             label  = status.value if status else "pending"
             style  = _STATUS_STYLE.get(label, "white")
-            console.print(info(
+            console.print(line(
                 f"{s.id:<{id_w}}  {s.capability_required:<{cap_w}}  [{style}]{label.upper()}[/{style}]"
             ))
     else:
-        console.print(info("[dim](no plan)[/dim]"))
+        console.print(line("[dim](no plan)[/dim]"))
     console.print(divider())
 
     # FACTS
-    console.print(f"  {step('[bold]FACTS[/bold]')}")
+    console.print(f"  {step('[bold]facts[/bold]')}")
     if state.facts:
         for f in state.facts:
-            console.print(info(f"{f.subtask_id}  [cyan]{f.tool}[/cyan]  → {_short(f.output)}"))
+            console.print(line(f"{f.subtask_id}  [cyan]{f.tool}[/cyan]  → {_short(f.output)}"))
     else:
-        console.print(info("[dim](no facts)[/dim]"))
+        console.print(line("[dim](no facts)[/dim]"))
     console.print(divider())
 
     # FAILURES (só se houver)
@@ -142,13 +149,13 @@ def _render(state, session: str, run_count: int) -> None:
         console.print(f"  {step('[bold red]FAILURES[/bold red]')}")
         for f in state.failures:
             tool = f.tool or "—"
-            console.print(info(f"{f.subtask_id}  [red]{tool}[/red]  {f.error}: {f.reason}"))
+            console.print(line(f"{f.subtask_id}  [red]{tool}[/red]  {f.error}: {f.reason}"))
         console.print(divider())
 
     # BUDGET
     b = state.budget
-    console.print(f"  {step('[bold]BUDGET[/bold]')}")
-    console.print(info(f"tokens:  {b.tokens_used:,} / {b.tokens_max:,}"))
-    console.print(info(f"calls:   {b.calls_used} / {b.calls_max}"))
-    console.print(info(f"elapsed: {b.elapsed_ms / 1000:.1f}s"))
+    console.print(f"  {step('[bold]budget[/bold]')}")
+    console.print(line(f"tokens:  {b.tokens_used:,} / {b.tokens_max:,}"))
+    console.print(line(f"calls:   {b.calls_used} / {b.calls_max}"))
+    console.print(line(f"elapsed: {b.elapsed_ms / 1000:.1f}s"))
     console.print()

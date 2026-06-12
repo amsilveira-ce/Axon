@@ -5,9 +5,9 @@ from typing import Optional
 
 import typer
 
-from axon.cli._print import console, ok, warn, fatal, info, divider, hint
+from axon.cli._print import console, ok, warn, fatal, line, divider, hint
 
-app = typer.Typer(help="Show or edit Principal Agent configuration.")
+app = typer.Typer()
 
 _NONE_SENTINEL = "__none__"
 
@@ -20,7 +20,6 @@ def config(
     temperature: Optional[float] = typer.Option(None, "--temperature", help="Sampling temperature (0.0–1.0)"),
     # ── reasoning ────────────────────────────────────────────────────
     reasoning:   Optional[str]   = typer.Option(None, "--reasoning-mode",   help="Reasoning mode: react | rewoo | tot"),
-    iterations:  Optional[int]   = typer.Option(None, "--max-iterations",   help="Max planning/execution cycles"),
     # ── domain ───────────────────────────────────────────────────────
     domain:      Optional[str]   = typer.Option(None, "--domain",      help="Domain skill to activate (e.g. clinical). Use 'none' to deactivate."),
     # ── budget ───────────────────────────────────────────────────────
@@ -57,7 +56,7 @@ def config(
 
     # nenhuma flag passada → só mostra
     _any = any([
-        llm, temperature is not None, reasoning, iterations is not None,
+        llm, temperature is not None, reasoning,
         domain, budget_tokens, budget_cost, budget_calls, budget_timeout,
         conv_messages, conv_tokens, conv_mode,
         cache, cache_max_size, gateway_add, gateway_remove,
@@ -90,10 +89,6 @@ def config(
                 )
             pa = pa.model_copy(update={"default_reasoning": reasoning})
             changes.append(f"default_reasoning = {reasoning}")
-
-        if iterations is not None:
-            pa = pa.model_copy(update={"max_iterations": iterations})
-            changes.append(f"max_iterations = {iterations}")
 
         if domain:
             if domain.lower() == "none":
@@ -181,9 +176,9 @@ def config(
     )
     if _needs_restart:
         console.print()
-        console.print(info("[dim]NOTE: restart the PA for changes to take effect[/dim]"))
-        console.print(info("[dim]  axon pa run --query '...'[/dim]"))
-        console.print(info("[dim]  axon pa chat[/dim]"))
+        console.print(line("[dim]note: restart the PA for changes to take effect[/dim]"))
+        console.print(line("[dim]  axon pa run --query '...'[/dim]"))
+        console.print(line("[dim]  axon pa chat[/dim]"))
 
     console.print()
 
@@ -206,26 +201,26 @@ def _show() -> None:
     console.print()
 
     console.print("  [dim]─── model ──────────────────────────────────────[/dim]")
-    console.print(info(f"llm.model        [cyan]{pa.llm.model}[/cyan]"))
-    console.print(info(f"llm.temperature  [cyan]{pa.llm.temperature}[/cyan]"))
-    console.print(info(f"llm.host         [dim]{pa.llm.host}[/dim]"))
-    console.print(info(f"llm.timeout      [dim]{pa.llm.timeout}s[/dim]"))
+    console.print(line(f"llm.model        [cyan]{pa.llm.model}[/cyan]"))
+    console.print(line(f"llm.temperature  [cyan]{pa.llm.temperature}[/cyan]"))
+    console.print(line(f"llm.host         [dim]{pa.llm.host}[/dim]"))
+    console.print(line(f"llm.timeout      [dim]{pa.llm.timeout}s[/dim]"))
     console.print()
 
     console.print("  [dim]─── reasoning ─────────────────────────────────[/dim]")
-    console.print(info(f"default_reasoning  [cyan]{pa.default_reasoning}[/cyan]"))
-    console.print(info(f"max_iterations     [cyan]{pa.max_iterations}[/cyan]"))
+    console.print(line(f"default_reasoning  [cyan]{pa.default_reasoning}[/cyan]"))
+    console.print(line(f"max_plan_subtasks  [cyan]{pa.max_plan_subtasks}[/cyan]"))
     console.print()
 
     console.print("  [dim]─── domain ────────────────────────────────────[/dim]")
-    console.print(info(f"intent_extractor.domain  {domain_display}"))
+    console.print(line(f"intent_extractor.domain  {domain_display}"))
     console.print()
 
     console.print("  [dim]─── budget ────────────────────────────────────[/dim]")
-    console.print(info(f"budget.tokens_max   [cyan]{pa.budget.tokens_max:,}[/cyan]"))
-    console.print(info(f"budget.cost_max_usd [cyan]${pa.budget.cost_max_usd:.2f}[/cyan]"))
-    console.print(info(f"budget.calls_max    [cyan]{pa.budget.calls_max}[/cyan]"))
-    console.print(info(f"budget.timeout_ms   [cyan]{pa.budget.timeout_ms:,.0f}ms[/cyan]"))
+    console.print(line(f"budget.tokens_max   [cyan]{pa.budget.tokens_max:,}[/cyan]"))
+    console.print(line(f"budget.cost_max_usd [cyan]${pa.budget.cost_max_usd:.2f}[/cyan]"))
+    console.print(line(f"budget.calls_max    [cyan]{pa.budget.calls_max}[/cyan]"))
+    console.print(line(f"budget.timeout_ms   [cyan]{pa.budget.timeout_ms:,.0f}ms[/cyan]"))
     console.print()
 
     max_tokens_display = (
@@ -234,23 +229,25 @@ def _show() -> None:
         else "[dim]none[/dim]"
     )
 
-    console.print("  [dim]─── conversa ──────────────────────────────────[/dim]")
-    console.print(info(f"conversation.max_messages  [cyan]{pa.conversation.max_messages}[/cyan]"))
-    console.print(info(f"conversation.max_tokens    {max_tokens_display}"))
-    console.print(info(f"conversation.window_mode   [cyan]{pa.conversation.window_mode}[/cyan]"))
+    console.print("  [dim]─── conversation ──────────────────────────────[/dim]")
+    console.print(line(f"conversation.max_messages  [cyan]{pa.conversation.max_messages}[/cyan]"))
+    console.print(line(f"conversation.max_tokens    {max_tokens_display}"))
+    console.print(line(f"conversation.window_mode   [cyan]{pa.conversation.window_mode}[/cyan]"))
     console.print()
 
     console.print("  [dim]─── cache ─────────────────────────────────────[/dim]")
-    console.print(info(f"cache.enabled   [cyan]{pa.cache.enabled}[/cyan]"))
-    console.print(info(f"cache.max_size  [cyan]{pa.cache.max_size}[/cyan]"))
+    console.print(line(f"cache.enabled   [cyan]{pa.cache.enabled}[/cyan]"))
+    console.print(line(f"cache.max_size  [cyan]{pa.cache.max_size}[/cyan]"))
     console.print()
 
     console.print("  [dim]─── gateways ──────────────────────────────────[/dim]")
     if pa.gateways:
         for gw in pa.gateways:
-            console.print(info(f"[dim]{gw}[/dim]"))
+            console.print(line(
+                f"[bold]{gw.name}[/bold]  [dim]{gw.url} · trust={gw.trust_level}[/dim]"
+            ))
     else:
-        console.print(info("[dim](none)[/dim]"))
+        console.print(line("[dim](none)[/dim]"))
     console.print()
 
 

@@ -14,7 +14,7 @@ from rich.markup import escape
 
 from axon.cli._print import console, warn, fatal, setup_logging
 
-app = typer.Typer(help="Interactive chat session with the Principal Agent.")
+app = typer.Typer()
 
 _MAX_CLARIFICATION_ROUNDS = 3
 
@@ -25,7 +25,14 @@ def chat(
     lang: str | None = typer.Option(None, "--lang", "-l", help="Respond in this language."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show extra pipeline detail."),
 ) -> None:
-    """Start an interactive session with the Principal Agent."""
+    """
+    Start an interactive session with the Principal Agent.
+
+    Same pipeline as 'axon pa run', plus conversation memory: previous
+    turns inform intent extraction, so follow-ups resolve naturally.
+    Sessions are persisted — resume one with --session <id>. Exit with
+    ctrl+c.
+    """
     setup_logging()
 
     from axon.config import read_config, paths
@@ -84,7 +91,7 @@ def _clarify(agent, query: str, lang, verbose):
             try:
                 intent = agent.extract_intent(query)
             except Exception as exc:
-                fatal(f"Intent extraction failed: {escape(str(exc))}")
+                fatal(f"intent extraction failed: {escape(str(exc))}")
 
         if verbose and agent.last_trace:
             from axon.cli.pa._trace import print_trace
@@ -162,7 +169,7 @@ def _run_pipeline(agent, raw_query: str, intent, lang, verbose) -> None:
     )
     n_subtasks = len(state.plan.subtasks)
     if exc is None and n_subtasks:
-        console.print(f"  [green]✓[/green]  [dim]{n_subtasks} subtask(s)   {elapsed}ms[/dim]")
+        console.print(f"  [green]◆[/green]  [dim]{n_subtasks} subtask(s)   {elapsed}ms[/dim]")
         for i, s in enumerate(state.plan.subtasks):
             branch = "└─" if i == n_subtasks - 1 else "├─"
             deps = f"  [dim]← {', '.join(s.depends_on)}[/dim]" if s.depends_on else ""
@@ -173,7 +180,7 @@ def _run_pipeline(agent, raw_query: str, intent, lang, verbose) -> None:
             )
     else:
         reason = escape(str(exc)) if exc else "no subtasks produced"
-        console.print(f"  [red]✗[/red]  [dim]failed: {reason}[/dim]")
+        console.print(f"  [red]■[/red]  [dim]failed: {reason}[/dim]")
         return _end(agent, state, None, lang)
     console.print()
 
@@ -186,7 +193,7 @@ def _run_pipeline(agent, raw_query: str, intent, lang, verbose) -> None:
     n_assigned = len(state.resource_assignments)
     if exc is None:
         console.print(
-            f"  [green]✓[/green]  [dim]{n_assigned}/{n_subtasks} assigned   {elapsed}ms[/dim]"
+            f"  [green]◆[/green]  [dim]{n_assigned}/{n_subtasks} assigned   {elapsed}ms[/dim]"
         )
         for sid, a in state.resource_assignments.items():
             via = f"GA {escape(a.ga_url)}" if a.ga_url else "local pool"
@@ -222,7 +229,7 @@ def _run_pipeline(agent, raw_query: str, intent, lang, verbose) -> None:
             console.print(f"    [cyan]{i}.[/cyan] {escape(q.question)}")
         return _end(agent, state, None, lang)
     else:
-        console.print(f"  [red]✗[/red]  [dim]failed: {escape(str(exc))}[/dim]")
+        console.print(f"  [red]■[/red]  [dim]failed: {escape(str(exc))}[/dim]")
         return _end(agent, state, None, lang)
     console.print()
 
@@ -237,7 +244,7 @@ def _run_pipeline(agent, raw_query: str, intent, lang, verbose) -> None:
 
     if exc is None:
         console.print(
-            f"  [green]✓[/green]  [dim]{n_facts} fact(s) · {n_fail} failure(s)   {elapsed}ms[/dim]"
+            f"  [green]◆[/green]  [dim]{n_facts} fact(s) · {n_fail} failure(s)   {elapsed}ms[/dim]"
         )
     else:
         console.print(
@@ -245,12 +252,12 @@ def _run_pipeline(agent, raw_query: str, intent, lang, verbose) -> None:
         )
     for f in state.facts:
         console.print(
-            f"    [green]✓[/green] [dim][{f.subtask_id}][/dim]  [bold]{escape(f.tool)}[/bold]"
+            f"    [green]◆[/green] [dim][{f.subtask_id}][/dim]  [bold]{escape(f.tool)}[/bold]"
             f"  [dim]{escape(str(_short(f.output)))}[/dim]"
         )
     for fail in state.failures:
         console.print(
-            f"    [red]✗[/red] [dim][{fail.subtask_id}][/dim]"
+            f"    [red]■[/red] [dim][{fail.subtask_id}][/dim]"
             f"  [bold]{escape(fail.tool or '—')}[/bold]"
             f"  [dim]{escape(fail.reason)}[/dim]"
         )
@@ -334,9 +341,9 @@ def _end(agent, state, response_en, lang) -> None:
         console.rule("[dim]response[/dim]", style="dim")
         console.print()
         lines = response.splitlines()
-        for i, line in enumerate(lines):
+        for i, ln in enumerate(lines):
             prefix = "  [bold dim]axon[/bold dim]  " if i == 0 else "        "
-            console.print(f"{prefix}[dim]│[/dim]  {escape(line)}")
+            console.print(f"{prefix}[dim]│[/dim]  {escape(ln)}")
         console.print()
     else:
         agent._persist_session()

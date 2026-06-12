@@ -4,7 +4,7 @@ from pathlib import Path
 
 import typer
 
-from axon.cli._print import console, ok, warn, fatal, info, step, divider
+from axon.cli._print import console, ok, warn, fatal, line, mark, step, divider
 
 app = typer.Typer(help="Manage PA skill files.")
 
@@ -12,8 +12,13 @@ _SKILLS_DIR  = Path("src/axon/pa/skills")
 _BASE_SKILL  = _SKILLS_DIR / "intent_extraction.md"
 _DOMAINS_DIR = _SKILLS_DIR / "domains"
 
-# Output contract — hardcoded aqui também para validação e reset
-_OUTPUT_CONTRACT_MARKER = "Output rules (enforced by parser — do not change):"
+# O output contract é hardcoded em axon.pa.intent_extractor (_OUTPUT_CONTRACT)
+# e anexado ao behavior em runtime — o .md carrega só o behavior. Estes marcadores
+# detectam um contrato colado indevidamente no .md (duplicaria o prompt).
+_CONTRACT_MARKERS = (
+    "Output rules (enforced by parser — do not change):",
+    "<output>",
+)
 
 _DOMAIN_TEMPLATE = """\
 # {name} Domain
@@ -69,32 +74,45 @@ def _get_active_domain() -> str | None:
         return None
 
 
-def _contract_intact(base_path: Path) -> bool:
-    """Verifica se o OUTPUT_CONTRACT marker está presente no base skill."""
+def _behavior_clean(base_path: Path) -> bool:
+    """True quando o .md é behavior-only — sem um output contract embutido.
+
+    O contrato real é hardcoded no IntentExtractor e anexado em runtime;
+    um contrato colado no .md apareceria duplicado no prompt.
+    """
     if not base_path.exists():
         return False
     content = base_path.read_text(encoding="utf-8")
-    return _OUTPUT_CONTRACT_MARKER in content
+    return not any(m in content for m in _CONTRACT_MARKERS)
 
 
 # ── commands ──────────────────────────────────────────────────────────────────
 
 @app.command("list")
 def skills_list() -> None:
-    """List available skills and domains."""
+    """
+    List available skills and domains.
+
+    Shows the base intent-extraction skill (behavior-only — the output
+    contract is enforced at runtime) and the domain files under
+    skills/domains/, marking the active one.
+    """
     skills_dir  = _resolve_skills_dir()
     base_path   = skills_dir / "intent_extraction.md"
     domains_dir = skills_dir / "domains"
     active      = _get_active_domain()
 
     console.print()
-    console.print("  [bold]SKILLS[/bold]")
+    console.print("  [bold]skills[/bold]")
     console.print()
 
     # base skill
     if base_path.exists():
-        contract_ok = _contract_intact(base_path)
-        contract    = "[green]✓[/green]" if contract_ok else "[red]✗ modified[/red]"
+        clean    = _behavior_clean(base_path)
+        contract = (
+            f"{mark(True)} [dim]enforced at runtime[/dim]" if clean
+            else f"{mark(False)} [red]output block embedded in .md[/red]"
+        )
         console.print(f"  {step(f'base   [dim]{base_path}[/dim]  contract: {contract}')}")
     else:
         console.print(f"  {step(f'base   [red]not found[/red] — run: axon pa skills reset')}")
@@ -114,12 +132,12 @@ def skills_list() -> None:
             console.print(f"  {step(f'domain [dim]{d.stem}[/dim]{marker}')}")
     else:
         console.print(f"  {step('[dim]domain (none available)[/dim]')}")
-        console.print(info("[dim]create with: axon pa skills new --domain <name>[/dim]"))
+        console.print(line("[dim]create with: axon pa skills new --domain <name>[/dim]"))
 
     if active and not any(d.stem == active for d in domains):
         console.print()
         console.print(warn(f"active domain '[bold]{active}[/bold]' not found in {domains_dir}"))
-        console.print(info(f"[dim]create it: axon pa skills new --domain {active}[/dim]"))
+        console.print(line(f"[dim]create it: axon pa skills new --domain {active}[/dim]"))
 
     console.print()
 
@@ -128,7 +146,14 @@ def skills_list() -> None:
 def skills_new(
     domain: str = typer.Option(..., "--domain", "-d", help="Domain name (e.g. clinical, finance)"),
 ) -> None:
-    """Create a new domain skill file from template."""
+    """
+    Create a new domain skill file from template.
+
+    A domain file adds the context your field requires to intent
+    extraction — available data sources, required inputs, compliance
+    rules. It is appended to the base behavior at runtime; activate it
+    with 'axon pa config --domain <name>'.
+    """
     skills_dir  = _resolve_skills_dir()
     domains_dir = skills_dir / "domains"
     domains_dir.mkdir(parents=True, exist_ok=True)
@@ -138,7 +163,7 @@ def skills_new(
     if path.exists():
         console.print()
         console.print(warn(f"[bold]{domain}.md[/bold] already exists at {path}"))
-        console.print(info("[dim]edit it directly in your editor[/dim]"))
+        console.print(line("[dim]edit it directly in your editor[/dim]"))
         console.print()
         raise typer.Exit(1)
 
@@ -146,10 +171,10 @@ def skills_new(
 
     console.print()
     console.print(ok(f"[bold]{domain}.md[/bold] created"))
-    console.print(info(f"[dim]{path}[/dim]"))
+    console.print(line(f"[dim]{path}[/dim]"))
     console.print()
-    console.print(info("[dim]edit the file, then activate with:[/dim]"))
-    console.print(info(f"[dim]axon pa config --domain {domain}[/dim]"))
+    console.print(line("[dim]edit the file, then activate with:[/dim]"))
+    console.print(line(f"[dim]axon pa config --domain {domain}[/dim]"))
     console.print()
 
 
@@ -175,14 +200,14 @@ def skills_show(
     console.print()
     console.print(f"  [bold]{label}[/bold]  [dim]{path}[/dim]")
     console.print()
-    for line in content.splitlines():
-        console.print(f"  [dim]│[/dim]  {line}")
+    for ln in content.splitlines():
+        console.print(line(ln))
     console.print()
 
 
 @app.command("validate")
 def skills_validate() -> None:
-    """Verify that the base skill output contract is intact."""
+    """Verify that the base skill is behavior-only (no embedded output contract)."""
     skills_dir = _resolve_skills_dir()
     base_path  = skills_dir / "intent_extraction.md"
 
@@ -190,68 +215,41 @@ def skills_validate() -> None:
 
     if not base_path.exists():
         console.print(warn(f"base skill not found at [dim]{base_path}[/dim]"))
-        console.print(info("[dim]run: axon pa skills reset[/dim]"))
+        console.print(line("[dim]run: axon pa skills reset[/dim]"))
         console.print()
         raise typer.Exit(1)
 
-    if _contract_intact(base_path):
-        console.print(ok("[bold]output contract intact[/bold]"))
-        console.print(info(f"[dim]{base_path}[/dim]"))
+    if _behavior_clean(base_path):
+        console.print(ok("[bold]base skill is behavior-only[/bold] — output contract enforced at runtime"))
+        console.print(line(f"[dim]{base_path}[/dim]"))
     else:
-        console.print(warn("[bold]output contract missing or modified[/bold]"))
-        console.print(info(f"[dim]{base_path}[/dim]"))
+        console.print(warn("[bold]output block embedded in the behavior file[/bold]"))
+        console.print(line(f"[dim]{base_path}[/dim]"))
         console.print()
-        console.print(info("[dim]the Axon parser expects a specific JSON schema in <output> tags.[/dim]"))
-        console.print(info("[dim]modifying the output contract may cause parse failures.[/dim]"))
+        console.print(line("[dim]the output contract is hardcoded and appended at runtime —[/dim]"))
+        console.print(line("[dim]an <output> block in the .md would appear twice in the prompt.[/dim]"))
         console.print()
-        console.print(info("[dim]to restore:[/dim]"))
-        console.print(info("[dim]  axon pa skills reset[/dim]"))
-        console.print(info("[dim]  axon pa skills reset --contract-only  (preserves your behavior edits)[/dim]"))
+        console.print(line("[dim]remove the block from the file, or restore the default:[/dim]"))
+        console.print(line("[dim]  axon pa skills reset[/dim]"))
         raise typer.Exit(1)
 
     console.print()
 
 
 @app.command("reset")
-def skills_reset(
-    contract_only: bool = typer.Option(
-        False, "--contract-only",
-        help="Restore only the output contract section, preserving behavior edits.",
-    ),
-) -> None:
-    """Restore the base skill to its default."""
+def skills_reset() -> None:
+    """Restore the base skill to its default (behavior-only)."""
     skills_dir = _resolve_skills_dir()
     base_path  = skills_dir / "intent_extraction.md"
     skills_dir.mkdir(parents=True, exist_ok=True)
 
-    if contract_only and base_path.exists():
-        # preserva o behavior do operador, restaura só o contrato
-        existing = base_path.read_text(encoding="utf-8")
+    base_path.write_text(_BASE_DEFAULT, encoding="utf-8")
 
-        # separa behavior do contrato se o marker existir
-        marker = "\n---\n"
-        if marker in existing:
-            behavior = existing.split(marker)[0].strip()
-        else:
-            behavior = existing.strip()
-
-        from axon.pa.intent_extractor import _OUTPUT_CONTRACT
-        new_content = f"{behavior}\n\n{_OUTPUT_CONTRACT}\n"
-        base_path.write_text(new_content, encoding="utf-8")
-
-        console.print()
-        console.print(ok("[bold]output contract restored[/bold]"))
-        console.print(info("[dim]behavior section preserved[/dim]"))
-
-    else:
-        base_path.write_text(_BASE_DEFAULT, encoding="utf-8")
-
-        console.print()
-        console.print(ok("[bold]base skill restored to default[/bold]"))
-
-    console.print(info(f"[dim]{base_path}[/dim]"))
     console.print()
-    console.print(info("[dim]NOTE: restart the PA for changes to take effect[/dim]"))
-    console.print(info("[dim]  axon pa run --query '...'[/dim]"))
-    console.print(info("[dim]  axon pa chat[/dim]"))
+    console.print(ok("[bold]base skill restored to default[/bold]"))
+    console.print(line(f"[dim]{base_path}[/dim]"))
+    console.print()
+    console.print(line("[dim]note: restart the PA for changes to take effect[/dim]"))
+    console.print(line("[dim]  axon pa run --query '...'[/dim]"))
+    console.print(line("[dim]  axon pa chat[/dim]"))
     console.print()

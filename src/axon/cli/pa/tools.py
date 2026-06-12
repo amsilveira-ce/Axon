@@ -5,7 +5,7 @@ from pathlib import Path
 
 import typer
 
-from axon.cli._print import console, ok, warn, fatal, info, step, divider
+from axon.cli._print import console, ok, warn, fatal, line, step, divider
 
 app = typer.Typer(help="Manage local PA tools.")
 
@@ -29,18 +29,24 @@ def _get_path() -> Path:
 
 @app.command("list")
 def tools_list() -> None:
-    """List registered local tools and their status."""
+    """
+    List registered local tools and their status.
+
+    Local tools live in .axon/pa/local_tools.json and are always the
+    Resolver's first stop. Disabled tools stay registered but are
+    hidden from the Resolver.
+    """
     path  = _get_path()
     data  = _read_tools(path)
     tools = data.get("tools", [])
 
     console.print()
-    console.print("  [bold]LOCAL TOOLS[/bold]")
+    console.print("  [bold]local tools[/bold]")
     console.print()
 
     if not tools:
-        console.print(info("[dim]no tools registered[/dim]"))
-        console.print(info("[dim]add with: axon pa tools add --name <name> --command '<cmd>' --capability <tag>[/dim]"))
+        console.print(line("[dim]no tools registered[/dim]"))
+        console.print(line("[dim]add with: axon pa tools add --name <name> --command '<cmd>' --capability <tag>[/dim]"))
         console.print()
         return
 
@@ -51,15 +57,15 @@ def tools_list() -> None:
         # console.print(f"  {step(f'[bold]{t[\"name\"]}[/bold]  {status}')}")
         title = f"[bold]{t['name']}[/bold]  {status}"
         console.print(f"  {step(title)}")
-        console.print(info(f"capability  [dim]{t.get('capability', '—')}[/dim]"))
-        console.print(info(f"command     [dim]{cmd}[/dim]"))
+        console.print(line(f"capability  [dim]{t.get('capability', '—')}[/dim]"))
+        console.print(line(f"command     [dim]{cmd}[/dim]"))
         if t.get("description"):
-            console.print(info(f"description [dim]{t['description']}[/dim]"))
+            console.print(line(f"description [dim]{t['description']}[/dim]"))
         console.print(divider())
 
     enabled_count = sum(1 for t in tools if t.get("enabled", True))
     console.print()
-    console.print(info(f"[dim]{enabled_count}/{len(tools)} enabled[/dim]"))
+    console.print(line(f"[dim]{enabled_count}/{len(tools)} enabled[/dim]"))
     console.print()
 
 
@@ -78,7 +84,7 @@ def _validate_command(cmd_parts: list[str], transport: str) -> str | None:
         # http: testa conectividade
         endpoint = cmd_parts[0] if cmd_parts else ""
         if not endpoint.startswith(("http://", "https://")):
-            return f"Invalid HTTP endpoint: {endpoint!r}\nExpected format: http://host:port/path"
+            return f"invalid HTTP endpoint: {endpoint!r}\nexpected format: http://host:port/path"
         try:
             import httpx
             httpx.get(endpoint, timeout=5.0)
@@ -125,7 +131,19 @@ def tools_add(
     description: str | None     = typer.Option(None, "--description", "-d", help="What this tool does — used by the PA to decide when to invoke it."),
     transport:   str            = typer.Option("stdio", "--transport", help="Transport: stdio | http"),
 ) -> None:
-    """Register a new local tool."""
+    """
+    Register a new local tool.
+
+    Local tools are MCP servers the PA runs itself — no Gateway
+    involved — and the Resolver always checks them first. The entry is
+    saved to .axon/pa/local_tools.json and the command is spawned on
+    demand.
+
+      axon pa tools add --name weather --capability weather \\
+        --command 'python -m my.weather' --description 'Local forecasts'
+
+    Restart the PA for new tools to load.
+    """
     import logging
     logger = logging.getLogger(__name__)
 
@@ -134,18 +152,18 @@ def tools_add(
         console.print()
         console.print(warn("[bold]--description is required[/bold]"))
         console.print()
-        console.print(info("The description tells the Principal Agent [bold]when and why[/bold] to use this tool."))
-        console.print(info("Without it, the PA cannot decide which tool to invoke for a given task."))
+        console.print(line("The description tells the Principal Agent [bold]when and why[/bold] to use this tool."))
+        console.print(line("Without it, the PA cannot decide which tool to invoke for a given task."))
         console.print()
-        console.print(info("[dim]Example:[/dim]"))
-        console.print(info("[dim]  axon pa tools add \\\\[/dim]"))
-        console.print(info(f'[dim]    --name {name or "my_tool"} \\\\[/dim]'))
-        console.print(info(f'[dim]    --command "{command or "python -m my.tool"}" \\\\[/dim]'))
-        console.print(info(f'[dim]    --capability "{capability or "my_capability"}" \\\\[/dim]'))
-        console.print(info('[dim]    --description "Fetches sales data and returns a structured report"[/dim]'))
+        console.print(line("[dim]Example:[/dim]"))
+        console.print(line("[dim]  axon pa tools add \\\\[/dim]"))
+        console.print(line(f'[dim]    --name {name or "my_tool"} \\\\[/dim]'))
+        console.print(line(f'[dim]    --command "{command or "python -m my.tool"}" \\\\[/dim]'))
+        console.print(line(f'[dim]    --capability "{capability or "my_capability"}" \\\\[/dim]'))
+        console.print(line('[dim]    --description "Fetches sales data and returns a structured report"[/dim]'))
         console.print()
-        console.print(info('[dim]Tip: be specific - "searches patient records in HStory EHR"[/dim]'))
-        console.print(info('[dim]is better than "searches records".[/dim]'))
+        console.print(line('[dim]Tip: be specific - "searches patient records in HStory EHR"[/dim]'))
+        console.print(line('[dim]is better than "searches records".[/dim]'))
         console.print()
         raise typer.Exit(1)
 
@@ -166,11 +184,11 @@ def tools_add(
         console.print()
         console.print(warn(f"[bold]{name}[/bold] not registered — command validation failed"))
         console.print()
-        for line in error.splitlines():
-            console.print(info(f"[red]{line}[/red]"))
+        for ln in error.splitlines():
+            console.print(line(f"[red]{ln}[/red]"))
         console.print()
-        console.print(info(f"[dim]fix the issue and run:[/dim]"))
-        console.print(info(f"[dim]  axon pa tools add --name {name} --command \"{command}\" --capability {capability}[/dim]"))
+        console.print(line(f"[dim]fix the issue and run:[/dim]"))
+        console.print(line(f"[dim]  axon pa tools add --name {name} --command \"{command}\" --capability {capability}[/dim]"))
         console.print()
         raise typer.Exit(1)
 
@@ -188,8 +206,8 @@ def tools_add(
 
     console.print()
     console.print(ok(f"[bold]{name}[/bold] registered"))
-    console.print(info(f"capability [dim]{capability}[/dim]"))
-    console.print(info(f"command    [dim]{command}[/dim]"))
+    console.print(line(f"capability [dim]{capability}[/dim]"))
+    console.print(line(f"command    [dim]{command}[/dim]"))
     console.print()
 
 

@@ -4,7 +4,7 @@ import secrets
 
 import typer
 
-from axon.cli._print import console, ok, info, warn, step, divider, fatal
+from axon.cli._print import console, err, ok, line, warn, status, step, divider, fatal
 from urllib.parse import urlparse
 
 app = typer.Typer(help="Register a resource with the Gateway.")
@@ -13,7 +13,7 @@ app = typer.Typer(help="Register a resource with the Gateway.")
 def _validate_url(url: str) -> None:
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
-        fatal(f"Invalid URL: '{url}'. Expected format: http://host:port")
+        fatal(f"invalid URL: '{url}'. expected format: http://host:port")
 
 
 @app.command("agent")
@@ -45,8 +45,8 @@ def add_agent(
     ga = GAConfig.resolve(gateway)
 
     console.print()
-    console.print(info(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
-    console.print(f"\n  {step(f'Validating agent at [cyan]{url}[/cyan]')}")
+    console.print(line(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
+    console.print(f"\n  {step(f'validating agent at [cyan]{url}[/cyan]')}")
     console.print(divider())
 
     result = validate_agent(url, ga.paths)
@@ -60,9 +60,9 @@ def add_agent(
             "health":        "health check",
         }
         label = step_labels.get(result.step or "", result.step or "validation")
-        console.print(f"  [red]■[/red] {label} failed\n")
-        for line in (result.error or "").split("\n"):
-            console.print(f"  [dim]{line}[/dim]")
+        console.print(f"  {err(f'{label} failed')}\n")
+        for ln in (result.error or "").split("\n"):
+            console.print(f"  [dim]{ln}[/dim]")
         console.print()
         raise typer.Exit(1)
 
@@ -93,7 +93,7 @@ def add_agent(
     try:
         add_resource(resource, ga.paths)
     except Exception as e:
-        fatal(f"Could not write to registry: {e}")
+        fatal(f"could not write to registry: {e}")
 
     assert result.verified_token is not None
     try:
@@ -109,33 +109,32 @@ def add_agent(
         pass
 
     if health.status == ResourceStatus.online:
-        console.print(f"  {step('health check     [green]online[/green] · fingerprint ok')}")
+        console.print(f"  {step(f'health check     {status("online")} · fingerprint ok')}")
     elif health.status == ResourceStatus.drift:
-        console.print(f"  {step('health check     [yellow]drift detected[/yellow] · agent card changed')}")
-        for line in (health.error or "").split("\n"):
-            console.print(f"  [dim]{line}[/dim]")
+        console.print(f"  {step(f'health check     {status("drift", "drift detected")} · agent card changed')}")
+        for ln in (health.error or "").split("\n"):
+            console.print(f"  [dim]{ln}[/dim]")
     else:
-        console.print(f"  {step('health check     [red]offline[/red]')}")
+        console.print(f"  {step(f'health check     {status("offline")}')}")
         console.print(f"  [dim]{health.error}[/dim]")
 
     console.print(divider())
     console.print()
 
     console.print(f"  {ok(f'[bold]{resource.name}[/bold] registered')}\n")
-    console.print(info(f"id          [dim]{resource.id}[/dim]"))
-    console.print(info(f"type        [dim]agent (A2A)[/dim]"))
-    console.print(info(f"skills      [dim]{', '.join(s.id for s in resource.skills) or '—'}[/dim]"))
-    console.print(info(f"endpoint    [dim]{url}[/dim]"))
-    console.print(info(f"fingerprint [dim]{resource.fingerprint}[/dim]"))
-    console.print(info(f"context     [dim]{ga.context}[/dim]"))
-    console.print(info(f"saved to    [dim]{ga.paths.registry}[/dim]"))
+    console.print(line(f"id          [dim]{resource.id}[/dim]"))
+    console.print(line(f"type        [dim]agent (A2A)[/dim]"))
+    console.print(line(f"skills      [dim]{', '.join(s.id for s in resource.skills) or '—'}[/dim]"))
+    console.print(line(f"endpoint    [dim]{url}[/dim]"))
+    console.print(line(f"fingerprint [dim]{resource.fingerprint}[/dim]"))
+    console.print(line(f"context     [dim]{ga.context}[/dim]"))
+    console.print(line(f"saved to    [dim]{ga.paths.registry}[/dim]"))
 
-    status_display = {
-        ResourceStatus.online:  "[green]online[/green]",
-        ResourceStatus.drift:   "[yellow]drift detected — re-register to update[/yellow]",
-        ResourceStatus.offline: "[red]offline — agent unreachable after registration[/red]",
-    }.get(health.status, health.status.value)
-    console.print(info(f"status      {status_display}"))
+    status_notes = {
+        ResourceStatus.drift:   "drift detected — re-register to update",
+        ResourceStatus.offline: "offline — agent unreachable after registration",
+    }
+    console.print(line(f"status      {status(health.status, status_notes.get(health.status))}"))
     console.print()
 
     # aviso de expiração do token
@@ -152,13 +151,13 @@ def add_agent(
     # next steps
     console.print(f"  [dim]next steps[/dim]")
     if axon_meta.registry_id == "local":
-        console.print(info("[dim]axon ga resource list[/dim]           view all registered resources"))
-        console.print(info("[dim]axon ga resource ping[/dim]           verify resources are reachable"))
-        console.print(info("[dim]axon pa gateway add <ga-url>[/dim]   connect this GA to a PA"))
+        console.print(line("[dim]axon ga resource list[/dim]           view all registered resources"))
+        console.print(line("[dim]axon ga resource ping[/dim]           verify resources are reachable"))
+        console.print(line("[dim]axon pa gateway add <ga-url>[/dim]   connect this GA to a PA"))
     else:
-        console.print(info(f"[dim]registry  {axon_meta.registry_id}[/dim]"))
+        console.print(line(f"[dim]registry  {axon_meta.registry_id}[/dim]"))
         if axon_meta.registry_url:
-            console.print(info(f"[dim]verify at {axon_meta.registry_url}[/dim]"))
+            console.print(line(f"[dim]verify at {axon_meta.registry_url}[/dim]"))
     console.print()
 
 
@@ -174,24 +173,36 @@ def add_mcp(
     location:    str        = typer.Option("header", "--location", help="api_key location: header|query|env"),
     header:      str | None = typer.Option(None, "--header",  help="Header name (location=header)"),
     param:       str | None = typer.Option(None, "--param",   help="Query param name (location=query)"),
-    env_var:     str | None = typer.Option(None, "--env-var", help="Env var que guarda o segredo"),
-    scope:       list[str]  = typer.Option(None, "--scope",   help="OAuth scope (repetível)"),
-    tag:         list[str]  = typer.Option(None, "--tag",     help="Capability tag (repetível)"),
-    paid:        bool       = typer.Option(False, "--paid/--free", help="Recurso cobra por chamada?"),
-    cost_per_call: float | None = typer.Option(None, "--cost-per-call", help="Custo estimado em USD por chamada"),
-    token:       str | None = typer.Option(None, "--token",   help="Token de admissão Axon (axon_tk_...) — opcional"),
-    description: str        = typer.Option("", "--description", help="Descrição do recurso"),
+    env_var:     str | None = typer.Option(None, "--env-var", help="Name of the env var that holds the secret — the secret itself is never stored"),
+    scope:       list[str]  = typer.Option(None, "--scope",   help="OAuth scope (repeatable)"),
+    tag:         list[str]  = typer.Option(None, "--tag",     help="Capability tag (repeatable)"),
+    paid:        bool       = typer.Option(False, "--paid/--free", help="Whether the resource charges per call"),
+    cost_per_call: float | None = typer.Option(None, "--cost-per-call", help="Estimated cost in USD per call"),
+    token:       str | None = typer.Option(None, "--token",   help="Axon admission token (axon_tk_...) — optional"),
+    description: str        = typer.Option("", "--description", help="Resource description"),
     gateway:     str | None = typer.Option(None, "--gateway", help="GA context to register into (default: active context)"),
 ) -> None:
     """
     Register an MCP resource with the active Gateway.
 
-    Validação = conexão viva: conecta de verdade via MCPClient e lista as tools
-    (prova que o recurso existe, está no ar e o que faz). Diferente do A2A, o
-    recurso não carrega axon_token — a autorização é apresentada pelo operador
-    aqui (--token, opcional): verificado e consumido no registro.
+    Validation is a live connection: the Gateway actually connects through
+    the MCPClient and lists the server's tools — proving the resource exists,
+    is reachable, and showing what it offers. Each discovered tool becomes a
+    skill in the registry, which is what the search endpoint matches against.
 
-    Transporte (exatamente um): --http | --sse | --stdio.
+    Pick exactly one transport: --http, --sse, or --stdio.
+
+    Unlike A2A agents, an MCP server cannot carry an axon_token in its
+    metadata — you present the admission token here instead (--token,
+    optional). The token is verified and burned at registration.
+
+    Secrets are never stored: --env-var records only the NAME of the
+    environment variable that holds the credential. Set it before serving:
+
+      export TAVILY_API_KEY="tvly-..."
+      axon add mcp tavily --http https://mcp.tavily.com/mcp/ \\
+        --auth api_key --location query --param tavilyApiKey \\
+        --env-var TAVILY_API_KEY --tag web_search
     """
     import shlex
     from axon.ga.config import GAConfig
@@ -238,7 +249,7 @@ def add_mcp(
 
     ga = GAConfig.resolve(gateway)
     console.print()
-    console.print(info(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
+    console.print(line(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
     console.print(f"\n  {step(f'Connecting to [cyan]{name}[/cyan] ([dim]{binding.value}[/dim])')}")
     console.print(divider())
 
@@ -246,9 +257,9 @@ def add_mcp(
     result = validate_mcp(manifest, token=token, paths=ga.paths)
     if not result.ok:
         step_label = "admission token" if result.step == "admission_token" else "connect"
-        console.print(f"  [red]■[/red] {step_label} failed\n")
-        for line in (result.error or "").split("\n"):
-            console.print(f"  [dim]{line}[/dim]")
+        console.print(f"  {err(f'{step_label} failed')}\n")
+        for ln in (result.error or "").split("\n"):
+            console.print(f"  [dim]{ln}[/dim]")
         console.print()
         raise typer.Exit(1)
 
@@ -296,7 +307,7 @@ def add_mcp(
     try:
         add_resource(resource, ga.paths)
     except Exception as e:
-        fatal(f"Could not write to registry: {e}")
+        fatal(f"could not write to registry: {e}")
 
     if result.verified_token:
         try:
@@ -314,18 +325,18 @@ def add_mcp(
         if paid else "free"
     )
 
-    console.print(info(f"id          [dim]{resource.id}[/dim]"))
-    console.print(info(f"type        [dim]mcp ({binding.value})[/dim]"))
-    console.print(info(f"auth        [dim]{auth_display}[/dim]"))
-    console.print(info(f"pricing     [dim]{pricing_display}[/dim]"))
-    console.print(info(f"tools       [dim]{tools_preview or '—'}[/dim]"))
+    console.print(line(f"id          [dim]{resource.id}[/dim]"))
+    console.print(line(f"type        [dim]mcp ({binding.value})[/dim]"))
+    console.print(line(f"auth        [dim]{auth_display}[/dim]"))
+    console.print(line(f"pricing     [dim]{pricing_display}[/dim]"))
+    console.print(line(f"tools       [dim]{tools_preview or '—'}[/dim]"))
     if endpoint:
-        console.print(info(f"endpoint    [dim]{endpoint}[/dim]"))
+        console.print(line(f"endpoint    [dim]{endpoint}[/dim]"))
     if command:
-        console.print(info(f"command     [dim]{' '.join(command)}[/dim]"))
-    console.print(info(f"token_ref   [dim]{token or '—'}[/dim]"))
-    console.print(info(f"context     [dim]{ga.context}[/dim]"))
-    console.print(info(f"saved to    [dim]{ga.paths.registry}[/dim]"))
+        console.print(line(f"command     [dim]{' '.join(command)}[/dim]"))
+    console.print(line(f"token_ref   [dim]{token or '—'}[/dim]"))
+    console.print(line(f"context     [dim]{ga.context}[/dim]"))
+    console.print(line(f"saved to    [dim]{ga.paths.registry}[/dim]"))
     console.print()
 
 
@@ -382,7 +393,7 @@ def add_resource(
     except FileNotFoundError as e:
         fatal(str(e))
     except Exception as e:
-        fatal(f"Invalid resource YAML: {e}")
+        fatal(f"invalid resource YAML: {e}")
 
     name     = spec.metadata.name
     binding  = spec.to_protocol_binding()
@@ -393,7 +404,7 @@ def add_resource(
     token    = spec.governance.token
 
     console.print()
-    console.print(info(f"[dim]resource: {name} ({binding.value})[/dim]"))
+    console.print(line(f"[dim]resource: {name} ({binding.value})[/dim]"))
     console.print()
 
     # 2. auth env var check — warn early, before attempting a live connection
@@ -412,20 +423,20 @@ def add_resource(
     if dry_run:
         console.print(f"  {step('[yellow]dry-run[/yellow] — skipping live connection and registration')}")
         console.print(divider())
-        console.print(info(f"name        [dim]{name}[/dim]"))
-        console.print(info(f"protocol    [dim]{binding.value}[/dim]"))
+        console.print(line(f"name        [dim]{name}[/dim]"))
+        console.print(line(f"protocol    [dim]{binding.value}[/dim]"))
         if endpoint:
-            console.print(info(f"endpoint    [dim]{endpoint}[/dim]"))
+            console.print(line(f"endpoint    [dim]{endpoint}[/dim]"))
         if command:
-            console.print(info(f"command     [dim]{' '.join(command)}[/dim]"))
+            console.print(line(f"command     [dim]{' '.join(command)}[/dim]"))
         auth_scheme = spec.spec.auth.scheme
         auth_loc    = spec.spec.auth.location
         auth_display = auth_scheme + (f"/{auth_loc}" if auth_scheme == "api_key" else "")
-        console.print(info(f"auth        [dim]{auth_display}[/dim]"))
-        console.print(info(f"skills      [dim]{len(spec.spec.skills)} declared[/dim]"))
+        console.print(line(f"auth        [dim]{auth_display}[/dim]"))
+        console.print(line(f"skills      [dim]{len(spec.spec.skills)} declared[/dim]"))
         pricing_str = "paid" + (f" (${pol.cost_per_call:.4f}/call)" if pol.cost_per_call else "") if pol.paid else "free"
-        console.print(info(f"pricing     [dim]{pricing_str}[/dim]"))
-        console.print(info(f"token       [dim]{token or '—'}[/dim]"))
+        console.print(line(f"pricing     [dim]{pricing_str}[/dim]"))
+        console.print(line(f"token       [dim]{token or '—'}[/dim]"))
         console.print()
         return
 
@@ -439,16 +450,16 @@ def add_resource(
     )
 
     ga = GAConfig.resolve(gateway)
-    console.print(info(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
+    console.print(line(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
     console.print(f"\n  {step(f'Connecting to [cyan]{name}[/cyan] ([dim]{binding.value}[/dim])')}")
     console.print(divider())
 
     result = validate_mcp(manifest, token=token, paths=ga.paths)
     if not result.ok:
         step_label = "admission token" if result.step == "admission_token" else "connect"
-        console.print(f"  [red]■[/red] {step_label} failed\n")
-        for line in (result.error or "").split("\n"):
-            console.print(f"  [dim]{line}[/dim]")
+        console.print(f"  {err(f'{step_label} failed')}\n")
+        for ln in (result.error or "").split("\n"):
+            console.print(f"  [dim]{ln}[/dim]")
         console.print()
         raise typer.Exit(1)
 
@@ -501,7 +512,7 @@ def add_resource(
     try:
         _add_resource(resource, ga.paths)
     except Exception as e:
-        fatal(f"Could not write to registry: {e}")
+        fatal(f"could not write to registry: {e}")
 
     if result.verified_token:
         try:
@@ -515,32 +526,38 @@ def add_resource(
 
     console.print()
     console.print(f"  {ok(f'[bold]{name}[/bold] registered')}\n")
-    console.print(info(f"id          [dim]{resource.id}[/dim]"))
-    console.print(info(f"type        [dim]mcp ({binding.value})[/dim]"))
-    console.print(info(f"auth        [dim]{auth_display}[/dim]"))
-    console.print(info(f"pricing     [dim]{pricing_str}[/dim]"))
-    console.print(info(f"tools       [dim]{tools_preview or '—'}[/dim]"))
-    console.print(info(f"skills      [dim]{len(skills)} ({('yaml' if yaml_skills else 'inferred')})[/dim]"))
+    console.print(line(f"id          [dim]{resource.id}[/dim]"))
+    console.print(line(f"type        [dim]mcp ({binding.value})[/dim]"))
+    console.print(line(f"auth        [dim]{auth_display}[/dim]"))
+    console.print(line(f"pricing     [dim]{pricing_str}[/dim]"))
+    console.print(line(f"tools       [dim]{tools_preview or '—'}[/dim]"))
+    console.print(line(f"skills      [dim]{len(skills)} ({('yaml' if yaml_skills else 'inferred')})[/dim]"))
     if endpoint:
-        console.print(info(f"endpoint    [dim]{endpoint}[/dim]"))
+        console.print(line(f"endpoint    [dim]{endpoint}[/dim]"))
     if command:
-        console.print(info(f"command     [dim]{' '.join(command)}[/dim]"))
-    console.print(info(f"token_ref   [dim]{token or '—'}[/dim]"))
-    console.print(info(f"context     [dim]{ga.context}[/dim]"))
-    console.print(info(f"saved to    [dim]{ga.paths.registry}[/dim]"))
+        console.print(line(f"command     [dim]{' '.join(command)}[/dim]"))
+    console.print(line(f"token_ref   [dim]{token or '—'}[/dim]"))
+    console.print(line(f"context     [dim]{ga.context}[/dim]"))
+    console.print(line(f"saved to    [dim]{ga.paths.registry}[/dim]"))
     console.print()
 
 
 # ── remove ────────────────────────────────────────────────────────────────────
 
-remove_app = typer.Typer(help="Unregister a resource from the Gateway.")
+remove_app = typer.Typer()
 
 
 @remove_app.callback(invoke_without_command=True)
 def remove(
     name: str = typer.Argument(..., help="Resource name"),
 ) -> None:
-    """Unregister a resource from the active Gateway."""
+    """
+    Unregister a resource from the active Gateway.
+
+    Mirror of 'axon add' — same as 'axon ga resource remove'. The
+    resource stops being offered to Principal Agents immediately; the
+    admission token it consumed is not restored.
+    """
     from axon.ga.config import GAConfig
     from axon.ga.registry import remove_resource as _remove
 
@@ -548,11 +565,11 @@ def remove(
     removed = _remove(name, ga.paths)
 
     if removed is None:
-        fatal(f"Resource '{name}' not found in registry '{ga.context}'.")
+        fatal(f"resource '{name}' not found in registry '{ga.context}'.")
 
     console.print()
     console.print(f"  {ok(f'[bold]{name}[/bold] removed from registry')}")
-    console.print(info(f"type     [dim]{removed.type.value}[/dim]"))
-    console.print(info(f"endpoint [dim]{removed.endpoint}[/dim]"))
-    console.print(info(f"context  [dim]{ga.context}[/dim]"))
+    console.print(line(f"type     [dim]{removed.type.value}[/dim]"))
+    console.print(line(f"endpoint [dim]{removed.endpoint}[/dim]"))
+    console.print(line(f"context  [dim]{ga.context}[/dim]"))
     console.print()

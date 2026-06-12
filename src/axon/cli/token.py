@@ -2,7 +2,7 @@ import typer
 from rich.table import Table
 from rich import box
 from datetime import timezone
-from axon.cli._print import console, ok, info, warn, fatal, divider, step
+from axon.cli._print import console, ok, line, warn, fatal, divider, step
 from axon.ga.tokens import generate, list_tokens, TokenVerificationError, revoke
 
 
@@ -40,15 +40,15 @@ def token_generate(
     try:
         token = generate(name, ga.paths)
     except Exception as e:
-        fatal(f"Could not generate token: {e}")
+        fatal(f"could not generate token: {e}")
 
     console.print()
-    console.print(info(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
+    console.print(line(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
     console.print(f"\n  {ok(f'Token generated for [bold]{name}[/bold]')}\n")
-    console.print(info(f"token   [cyan]{token.token}[/cyan]"))
-    console.print(info(f"status  [dim]{token.status.value}[/dim]"))
-    console.print(info(f"uses    [dim]{token.max_uses} (single-use)[/dim]"))
-    console.print(info(f"saved   [dim]{ga.paths.tokens}[/dim]"))
+    console.print(line(f"token   [cyan]{token.token}[/cyan]"))
+    console.print(line(f"status  [dim]{token.status.value}[/dim]"))
+    console.print(line(f"uses    [dim]{token.max_uses} (single-use)[/dim]"))
+    console.print(line(f"saved   [dim]{ga.paths.tokens}[/dim]"))
     console.print()
     console.print(f"  [dim]Add to your agent card capabilities.extensions:[/dim]")
     console.print()
@@ -81,7 +81,12 @@ def token_list(
     all_contexts:  bool       = typer.Option(False, "--all-contexts",  help="List tokens from every registered GA context"),
     gateway:       str | None = typer.Option(None,  "--gateway",       help="GA context to list tokens from (default: active context)"),
 ) -> None:
-    """List registration tokens in the local store."""
+    """
+    List registration tokens in the local store.
+
+    Pending tokens are shown by default; --all includes used and
+    revoked ones. Use --all-contexts to sweep every configured gateway.
+    """
     from pathlib import Path
     from axon.ga.config import GAConfig, GAPaths
 
@@ -117,12 +122,12 @@ def token_list(
             return
 
         table = Table(box=box.SIMPLE, show_header=True, header_style="dim", pad_edge=False)
-        table.add_column("CONTEXT", style="dim",     no_wrap=True)
-        table.add_column("TOKEN",   style="cyan",    no_wrap=True)
-        table.add_column("NAME",    style="default", no_wrap=True)
-        table.add_column("STATUS",  style="default", no_wrap=True)
-        table.add_column("USED BY", style="dim",     no_wrap=True)
-        table.add_column("CREATED", style="dim",     no_wrap=True)
+        table.add_column("context", style="dim",     no_wrap=True)
+        table.add_column("token",   style="cyan",    no_wrap=True)
+        table.add_column("name",    style="default", no_wrap=True)
+        table.add_column("status",  style="default", no_wrap=True)
+        table.add_column("used by", style="dim",     no_wrap=True)
+        table.add_column("created", style="dim",     no_wrap=True)
 
         for ctx_name, t in rows:
             short   = t.token[:24] + "..."
@@ -130,7 +135,7 @@ def token_list(
             table.add_row(ctx_name, short, t.name, status_colors.get(t.status.value, t.status.value), t.used_by or "—", created)
 
         console.print(table)
-        console.print(info(f"[dim]{len(rows)} token(s) across {len(contexts)} context(s)[/dim]"))
+        console.print(line(f"[dim]{len(rows)} token(s) across {len(contexts)} context(s)[/dim]"))
         console.print()
         return
 
@@ -142,7 +147,7 @@ def token_list(
         tokens = [t for t in tokens if t.status.value == "pending"]
 
     console.print()
-    console.print(info(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
+    console.print(line(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
     console.print()
 
     if not tokens:
@@ -154,11 +159,11 @@ def token_list(
         return
 
     table = Table(box=box.SIMPLE, show_header=True, header_style="dim", pad_edge=False)
-    table.add_column("TOKEN",   style="cyan",    no_wrap=True)
-    table.add_column("NAME",    style="default", no_wrap=True)
-    table.add_column("STATUS",  style="default", no_wrap=True)
-    table.add_column("USED BY", style="dim",     no_wrap=True)
-    table.add_column("CREATED", style="dim",     no_wrap=True)
+    table.add_column("token",   style="cyan",    no_wrap=True)
+    table.add_column("name",    style="default", no_wrap=True)
+    table.add_column("status",  style="default", no_wrap=True)
+    table.add_column("used by", style="dim",     no_wrap=True)
+    table.add_column("created", style="dim",     no_wrap=True)
 
     for t in tokens:
         short   = t.token[:24] + "..."
@@ -166,7 +171,7 @@ def token_list(
         table.add_row(short, t.name, status_colors.get(t.status.value, t.status.value), t.used_by or "—", created)
 
     console.print(table)
-    console.print(info(f"[dim]{len(tokens)} token(s) · use --all to include used/revoked[/dim]"))
+    console.print(line(f"[dim]{len(tokens)} token(s) · use --all to include used/revoked[/dim]"))
     console.print()
 
 @app.command("revoke")
@@ -189,10 +194,10 @@ def token_revoke(
         fatal(str(e))
 
     console.print()
-    console.print(info(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
+    console.print(line(f"[dim]context: {ga.context} ({ga.name})[/dim]"))
     console.print(f"\n  {ok(f'Token for [bold]{entry.name}[/bold] revoked')}")
-    console.print(info(f"[dim]{entry.token[:24]}...[/dim]"))
+    console.print(line(f"[dim]{entry.token[:24]}...[/dim]"))
     if entry.used_by:
-        console.print(info(f"[dim]was used by resource {entry.used_by}[/dim]"))
+        console.print(line(f"[dim]was used by resource {entry.used_by}[/dim]"))
         console.print(warn("run 'axon ga resource ping --all' to update resource status"))
     console.print()

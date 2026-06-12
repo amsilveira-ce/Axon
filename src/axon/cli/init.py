@@ -11,7 +11,7 @@ from axon.config import (
     config_exists, write_config,
     resolve_data_dir, AxonPaths, GAPaths,
 )
-from axon.cli._print import console, warn, ok, fatal, info, step, divider
+from axon.cli._print import console, warn, ok, fatal, line, step, divider
 from axon.cli.ga._prompts import pick_retrieval_strategy
 
 app = typer.Typer()
@@ -62,14 +62,28 @@ def init(
     yes:      bool = typer.Option(False, "--defaults", "-d", help="Use all default values without prompting"),
     data_dir: str  = typer.Option(".axon", "--data-dir", help="Directory for runtime data (default: .axon)"),
 ) -> None:
-    """Initialize Axon in the current directory."""
+    """
+    Initialize Axon in the current directory.
+
+    Walks you through the initial setup and writes two things:
+    axon.config.json (every PA and GA setting — edit later with
+    'axon pa config' and 'axon ga config') and the .axon/ data directory
+    (registry, tokens, sessions, caches and the default local tools).
+
+    Running it again is safe: an existing config is never overwritten.
+
+    Next steps:
+      axon ga serve                start the Gateway Agent
+      axon pa run --query '...'    one-shot query
+      axon pa chat                 interactive session
+    """
 
     if config_exists():
         console.print()
-        console.print(warn("[bold]Already initialized[/bold]"))
+        console.print(warn("[bold]already initialized[/bold]"))
         console.print()
-        console.print(info("[cyan]axon.config.json[/cyan] already exists."))
-        console.print(info("To start over, run [bold]bash scripts/reset.sh[/bold]"))
+        console.print(line("[cyan]axon.config.json[/cyan] already exists."))
+        console.print(line("to start over, run [bold]bash scripts/reset.sh[/bold]"))
         console.print()
         raise typer.Exit(1)
 
@@ -91,7 +105,7 @@ def init(
         if raw in ("react", "rewoo", "tot"):
             pa = pa.model_copy(update={"default_reasoning": raw})
         else:
-            console.print(warn(f"Unknown mode '{raw}', using default: {pa.default_reasoning}"))
+            console.print(warn(f"unknown mode '{raw}', using default: {pa.default_reasoning}"))
 
         raw = typer.prompt("  Max PA iterations", default=str(pa.max_iterations))
         pa  = pa.model_copy(update={"max_iterations": int(raw)})
@@ -138,7 +152,7 @@ def init(
     try:
         write_config(config)
     except Exception as e:
-        fatal(f"Could not write axon.config.json: {e}")
+        fatal(f"could not write axon.config.json: {e}")
 
     cwd    = Path.cwd()
     p      = AxonPaths(resolve_data_dir(data_dir, cwd))
@@ -149,7 +163,7 @@ def init(
     try:
         _bootstrap_files(p, ga_dir, ga_context)
     except Exception as e:
-        fatal(f"Could not create data directory structure: {e}")
+        fatal(f"could not create data directory structure: {e}")
 
     rel = p.root.relative_to(cwd) if p.root.is_relative_to(cwd) else p.root
 
@@ -184,11 +198,11 @@ def init(
     tools = DEFAULT_LOCAL_TOOLS.get("tools", [])
     console.print("  [dim]Local tools registered:[/dim]")
     for t in tools:
-        console.print(info(f"[dim]{t['name']:<14} → {t['capability']}[/dim]"))
+        console.print(line(f"[dim]{t['name']:<14} → {t['capability']}[/dim]"))
     console.print()
     console.print("  [dim]Next steps[/dim]")
-    console.print(info("[dim]axon ga serve[/dim]                   start the Gateway Agent"))
-    console.print(info("[dim]axon pa run --query '...'[/dim]"))
-    console.print(info("[dim]axon pa chat[/dim]"))
-    console.print(info("[dim]axon pa tools list[/dim]"))
+    console.print(line("[dim]axon ga serve[/dim]                   start the Gateway Agent"))
+    console.print(line("[dim]axon pa run --query '...'[/dim]"))
+    console.print(line("[dim]axon pa chat[/dim]"))
+    console.print(line("[dim]axon pa tools list[/dim]"))
     console.print()

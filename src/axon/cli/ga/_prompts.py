@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import typer
 
-from axon.cli._print import console, ok, warn, info
+from axon.cli._print import console, ok, warn, line
 
 
 def pick_retrieval_strategy(ollama_host: str = "http://localhost:11434") -> tuple[str, str | None]:
@@ -57,7 +57,7 @@ def _pick_with_questionary(ollama_host: str) -> tuple[str, str | None]:
 
     # detectar modelos disponíveis
     console.print()
-    console.print(info("[dim]scanning Ollama for embedding models...[/dim]"))
+    console.print(line("[dim]scanning Ollama for embedding models...[/dim]"))
 
     from axon.ga.ollama_discover import list_embedding_models
     available = list_embedding_models(host=ollama_host)
@@ -65,8 +65,8 @@ def _pick_with_questionary(ollama_host: str) -> tuple[str, str | None]:
     if not available:
         console.print()
         console.print(warn("no embedding models found in Ollama"))
-        console.print(info("[dim]popular: nomic-embed-text, mxbai-embed-large, bge-m3[/dim]"))
-        console.print(info("[dim]install: ollama pull nomic-embed-text[/dim]"))
+        console.print(line("[dim]popular: nomic-embed-text, mxbai-embed-large, bge-m3[/dim]"))
+        console.print(line("[dim]install: ollama pull nomic-embed-text[/dim]"))
         console.print()
         model = typer.prompt("  Embedding model name", default="nomic-embed-text")
         return "embedding", model

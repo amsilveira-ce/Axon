@@ -6,7 +6,7 @@ Logging is completely separate — this is purely for human-readable output.
 """
 from __future__ import annotations
 
-from axon.cli._print import console
+from axon.cli._print import console, err, ok
 from axon.pa.executor import _short
 
 
@@ -24,14 +24,6 @@ def _row(label: str, value: str, *, indent: int = 4, style: str = "dim") -> None
         console.print(f"{pad}[{style}]{label:<14}[/{style}] {value}")
     else:
         console.print(f"{pad}{label:<14} {value}")
-
-
-def _ok(text: str) -> str:
-    return f"[green]✓[/green] {text}"
-
-
-def _fail(text: str) -> str:
-    return f"[red]✗[/red] {text}"
 
 
 # ── stage 1 — intent extractor ────────────────────────────────────────────────
@@ -114,14 +106,14 @@ def print_execution(state: "AgentState") -> None:  # type: ignore[name-defined]
 
     for f in state.facts:
         console.print(
-            f"    {_ok(f'[dim][{f.subtask_id}][/dim] [bold]{f.tool}[/bold]')}  "
+            f"    {ok(f'[dim][{f.subtask_id}][/dim] [bold]{f.tool}[/bold]')}  "
             f"[dim]{_short(f.output)}[/dim]"
         )
 
     for fail in state.failures:
         tool = fail.tool or "-"
         console.print(
-            f"    {_fail(f'[dim][{fail.subtask_id}][/dim] [bold]{tool}[/bold]')}  "
+            f"    {err(f'[dim][{fail.subtask_id}][/dim] [bold]{tool}[/bold]')}  "
             f"[dim]{fail.reason}: {_short(fail.error)}[/dim]"
         )
 

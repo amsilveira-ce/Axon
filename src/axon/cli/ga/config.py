@@ -6,9 +6,9 @@ from typing import Optional
 
 import typer
 
-from axon.cli._print import console, ok, warn, fatal, info, step, divider
+from axon.cli._print import console, ok, warn, fatal, line, step, divider
 
-app = typer.Typer(help="Show or edit the active Gateway Agent configuration.")
+app = typer.Typer()
 
 
 @app.callback(invoke_without_command=True)
@@ -50,10 +50,10 @@ def config(
 
     # ── validações ────────────────────────────────────────────────────
     if trust_level and trust_level not in ("local", "vendor", "unknown"):
-        fatal(f"Invalid trust-level '{trust_level}'. Valid: local, vendor, unknown")
+        fatal(f"invalid trust-level '{trust_level}'. valid: local, vendor, unknown")
 
     if retrieval and retrieval not in ("keyword", "embedding"):
-        fatal(f"Invalid retrieval '{retrieval}'. Valid: keyword, embedding")
+        fatal(f"invalid retrieval '{retrieval}'. valid: keyword, embedding")
 
     # ── lê ga.json atual ──────────────────────────────────────────────
     if p.ga_config.exists():
@@ -127,7 +127,7 @@ def config(
     for change in changes:
         console.print(f"  {ok(f'[dim]{change}[/dim]')}")
     console.print()
-    console.print(info("[dim]GET /ga/card reflects changes immediately — no restart needed[/dim]"))
+    console.print(line("[dim]GET /ga/card reflects changes immediately — no restart needed[/dim]"))
     console.print()
 
 
@@ -142,13 +142,13 @@ def _show(ga: "GAConfig") -> None:  # type: ignore[name-defined]
 
     console.print()
     console.print(f"  [bold]GA config[/bold]  [dim]context: {ga.context}[/dim]")
-    console.print(info(f"[dim]file: {p.ga_config}[/dim]"))
+    console.print(line(f"[dim]file: {p.ga_config}[/dim]"))
     console.print()
 
     console.print("  [dim]─── identity ──────────────────────────────────[/dim]")
-    console.print(info(f"name          [cyan]{cfg.get('name', ga.name)}[/cyan]"))
-    console.print(info(f"description   [dim]{cfg.get('description') or '(not set)'}[/dim]"))
-    console.print(info(f"organization  [dim]{cfg.get('organization') or '(not set)'}[/dim]"))
+    console.print(line(f"name          [cyan]{cfg.get('name', ga.name)}[/cyan]"))
+    console.print(line(f"description   [dim]{cfg.get('description') or '(not set)'}[/dim]"))
+    console.print(line(f"organization  [dim]{cfg.get('organization') or '(not set)'}[/dim]"))
 
     trust = cfg.get("trust_level", "local")
     trust_color = {
@@ -156,23 +156,23 @@ def _show(ga: "GAConfig") -> None:  # type: ignore[name-defined]
         "vendor":  "[cyan]vendor[/cyan]",
         "unknown": "[yellow]unknown[/yellow]",
     }.get(trust, trust)
-    console.print(info(f"trust_level   {trust_color}"))
+    console.print(line(f"trust_level   {trust_color}"))
     console.print()
 
     console.print("  [dim]─── server ────────────────────────────────────[/dim]")
-    console.print(info(f"port      [cyan]{cfg.get('port', ga.port)}[/cyan]"))
-    console.print(info(f"data_dir  [dim]{cfg.get('data_dir', ga.data_dir)}[/dim]"))
-    console.print(info(f"version   [dim]{cfg.get('version', '0.1.0')}[/dim]"))
+    console.print(line(f"port      [cyan]{cfg.get('port', ga.port)}[/cyan]"))
+    console.print(line(f"data_dir  [dim]{cfg.get('data_dir', ga.data_dir)}[/dim]"))
+    console.print(line(f"version   [dim]{cfg.get('version', '0.1.0')}[/dim]"))
     console.print()
 
     console.print("  [dim]─── retrieval ─────────────────────────────────[/dim]")
-    console.print(info(f"strategy  [cyan]{cfg.get('retrieval_strategy', ga.instance.retrieval_strategy)}[/cyan]"))
+    console.print(line(f"strategy  [cyan]{cfg.get('retrieval_strategy', ga.instance.retrieval_strategy)}[/cyan]"))
     if cfg.get("retrieval_strategy") == "embedding" or ga.instance.retrieval_strategy == "embedding":
-        console.print(info(f"model     [cyan]{cfg.get('embedding_model') or ga.instance.embedding_model or '(not set)'}[/cyan]"))
-        console.print(info(f"host      [dim]{cfg.get('embedding_host', ga.instance.embedding_host)}[/dim]"))
-        console.print(info(f"threshold [dim]{cfg.get('embedding_threshold', ga.instance.embedding_threshold)}[/dim]"))
-        console.print(info(f"top_k     [dim]{cfg.get('embedding_top_k', ga.instance.embedding_top_k)}[/dim]"))
+        console.print(line(f"model     [cyan]{cfg.get('embedding_model') or ga.instance.embedding_model or '(not set)'}[/cyan]"))
+        console.print(line(f"host      [dim]{cfg.get('embedding_host', ga.instance.embedding_host)}[/dim]"))
+        console.print(line(f"threshold [dim]{cfg.get('embedding_threshold', ga.instance.embedding_threshold)}[/dim]"))
+        console.print(line(f"top_k     [dim]{cfg.get('embedding_top_k', ga.instance.embedding_top_k)}[/dim]"))
     console.print()
 
-    console.print(info("[dim]edit with: axon ga config --name '...' --organization '...'[/dim]"))
+    console.print(line("[dim]edit with: axon ga config --name '...' --organization '...'[/dim]"))
     console.print()

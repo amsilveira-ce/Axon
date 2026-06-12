@@ -4,9 +4,9 @@ from typing import Optional
 
 import typer
 
-from axon.cli._print import console, ok, info, fatal, hint
+from axon.cli._print import console, ok, line, fatal, hint
 
-app = typer.Typer(help="Show or edit the PA resource policy.")
+app = typer.Typer()
 
 _FALLBACKS = {"skip", "fail", "ask_user"}
 
@@ -21,8 +21,14 @@ def policy(ctx: typer.Context) -> None:
     Show or edit the operator resource policy (axon.config.json).
 
     Without a subcommand: shows the current policy.
-    Use 'set' to edit fields. A política é aplicada pelo Resolver ao escolher
-    recursos vindos dos Gateway Agents.
+    Use 'set' to edit fields.
+
+    The policy is enforced by the Resolver when it picks resources offered
+    by Gateway Agents: paid resources can be blocked (--allow-paid), costly
+    ones capped (--max-cost-per-call), weak matches rejected
+    (--match-threshold), and --fallback-strategy decides what happens when
+    no eligible resource covers a required capability — drop the step
+    (skip), abort the run (fail), or ask you first (ask_user).
     """
     from axon.config import read_config
 
@@ -37,9 +43,9 @@ def policy(ctx: typer.Context) -> None:
 
 @app.command("set")
 def policy_set(
-    allow_paid:        Optional[str]   = typer.Option(None, "--allow-paid",         help="true | false — permitir recursos pagos"),
-    max_cost_per_call: Optional[float] = typer.Option(None, "--max-cost-per-call",  help="USD máx por chamada (0 = sem limite)"),
-    match_threshold:   Optional[float] = typer.Option(None, "--match-threshold",    help="match mínimo 0..1 para aceitar um recurso do GA"),
+    allow_paid:        Optional[str]   = typer.Option(None, "--allow-paid",         help="true | false — allow paid resources"),
+    max_cost_per_call: Optional[float] = typer.Option(None, "--max-cost-per-call",  help="Max USD per call (0 = no limit)"),
+    match_threshold:   Optional[float] = typer.Option(None, "--match-threshold",    help="Minimum match score (0-1) to accept a resource from a GA"),
     fallback:          Optional[str]   = typer.Option(None, "--fallback-strategy",  help="skip | fail | ask_user"),
 ) -> None:
     """Edit resource policy fields and save to axon.config.json."""
@@ -92,7 +98,7 @@ def policy_set(
     for c in changes:
         console.print(f"  {ok(f'[dim]{c}[/dim]')}")
     console.print()
-    console.print(info("[dim]NOTE: restart the PA for changes to take effect[/dim]"))
+    console.print(line("[dim]note: restart the PA for changes to take effect[/dim]"))
     console.print()
 
 
@@ -110,8 +116,8 @@ def _show() -> None:
     console.print()
     console.print("  [bold]PA resource policy[/bold]")
     console.print()
-    console.print(info(f"allow_paid          [cyan]{rp.allow_paid}[/cyan]"))
-    console.print(info(f"max_cost_per_call   {max_cost}"))
-    console.print(info(f"match_threshold     [cyan]{rp.match_threshold}[/cyan]"))
-    console.print(info(f"fallback_strategy   [cyan]{rp.fallback_strategy}[/cyan]"))
+    console.print(line(f"allow_paid          [cyan]{rp.allow_paid}[/cyan]"))
+    console.print(line(f"max_cost_per_call   {max_cost}"))
+    console.print(line(f"match_threshold     [cyan]{rp.match_threshold}[/cyan]"))
+    console.print(line(f"fallback_strategy   [cyan]{rp.fallback_strategy}[/cyan]"))
     console.print()

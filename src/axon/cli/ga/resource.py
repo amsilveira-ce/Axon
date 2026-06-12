@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import typer
 
-from axon.cli._print import console, ok, warn, fatal, info, step, divider
+from axon.cli._print import console, ok, warn, fatal, line, status, step, divider
 
 app = typer.Typer(help="Manage resources in the active Gateway Agent.")
 
@@ -37,32 +37,31 @@ def _active_context() -> str:
 
 @app.command("list")
 def resource_list() -> None:
-    """List resources registered in the active gateway."""
+    """
+    List resources registered in the active gateway.
+
+    Shows each resource with its lifecycle status (online, validating,
+    drift, offline, failed), endpoint and capability tags. Status
+    reflects the last health check — refresh with 'axon ga resource ping'.
+    """
     ctx       = _active_context()
     resources = _get_registry()
 
     console.print()
-    console.print(f"  [bold]RESOURCES[/bold]  [dim]context: {ctx}[/dim]")
+    console.print(f"  [bold]resources[/bold]  [dim]context: {ctx}[/dim]")
     console.print()
 
     if not resources:
-        console.print(info("[dim]no resources registered[/dim]"))
-        console.print(info("[dim]register with: axon add agent <url>[/dim]"))
+        console.print(line("[dim]no resources registered[/dim]"))
+        console.print(line("[dim]register with: axon add agent <url>[/dim]"))
         console.print()
         return
 
     for r in resources:
-        status_color = {
-            "online":     "[green]online[/green]",
-            "offline":    "[red]offline[/red]",
-            "validating": "[yellow]drift[/yellow]",
-            "failed":     "[red]failed[/red]",
-        }.get(r.status.value, f"[dim]{r.status.value}[/dim]")
-
-        console.print(f"  {step(f'[bold]{r.name}[/bold]  {status_color}')}")
-        console.print(info(f"[dim]id          {r.id}[/dim]"))
-        console.print(info(f"[dim]type        {r.type.value}[/dim]"))
-        console.print(info(f"[dim]endpoint    {r.endpoint}[/dim]"))
+        console.print(f"  {step(f'[bold]{r.name}[/bold]  {status(r.status)}')}")
+        console.print(line(f"[dim]id          {r.id}[/dim]"))
+        console.print(line(f"[dim]type        {r.type.value}[/dim]"))
+        console.print(line(f"[dim]endpoint    {r.endpoint}[/dim]"))
         if r.skills:
             seen: list[str] = []
             for s in r.skills:
@@ -70,11 +69,11 @@ def resource_list() -> None:
                     if t not in seen:
                         seen.append(t)
             if seen:
-                console.print(info(f"[dim]tags        {', '.join(seen)}[/dim]"))
+                console.print(line(f"[dim]tags        {', '.join(seen)}[/dim]"))
         console.print(divider())
 
     console.print()
-    console.print(info(f"[dim]{len(resources)} resource(s)[/dim]"))
+    console.print(line(f"[dim]{len(resources)} resource(s)[/dim]"))
     console.print()
 
 
@@ -84,7 +83,20 @@ def resource_list() -> None:
 def resource_ping(
     name_or_id: str | None = typer.Argument(None, help="Resource name or ID. Omit to ping all."),
 ) -> None:
-    """Check health of resources in the active gateway."""
+    """
+    Check health of resources in the active gateway.
+
+    For A2A agents this re-fetches the agent card and recomputes the
+    HMAC fingerprint: reachable + same fingerprint → online; unreachable
+    → offline; reachable but changed → drift (the agent is alive, but
+    what it offers no longer matches what was registered — re-register
+    to accept the new contract).
+
+    MCP resources are not probed: the GA stores no credentials, so
+    monitoring is not applicable by design.
+
+    Status changes are persisted to the registry.
+    """
     import json
     from axon.config import ga_paths
     from axon.health import check
@@ -110,21 +122,16 @@ def resource_ping(
         fatal(f"resource '{name_or_id}' not found — run 'axon ga resource list'")
 
     console.print()
-    console.print(f"  [bold]PING[/bold]  [dim]context: {ctx}[/dim]")
+    console.print(f"  [bold]ping[/bold]  [dim]context: {ctx}[/dim]")
     console.print()
 
     updated = False
     for r in targets:
         result = check(r, p)
-        status_color = {
-            "online":  "[green]online[/green]",
-            "offline": "[red]offline[/red]",
-            "drift":   "[yellow]drift detected[/yellow]",
-        }.get(result.status.value, result.status.value)
-
-        console.print(f"  {step(f'[bold]{r.name}[/bold]  {status_color}')}")
+        label = "drift detected" if result.status.value == "drift" else None
+        console.print(f"  {step(f'[bold]{r.name}[/bold]  {status(result.status, label)}')}")
         if result.error:
-            console.print(info(f"[red]{result.error}[/red]"))
+            console.print(line(f"[red]{result.error}[/red]"))
 
         # atualiza status no registry se mudou
         if result.status != r.status:
@@ -147,7 +154,13 @@ def resource_ping(
 def resource_remove(
     name_or_id: str = typer.Argument(..., help="Resource name or ID"),
 ) -> None:
-    """Remove a resource from the active gateway registry."""
+    """
+    Remove a resource from the active gateway registry.
+
+    The resource stops being offered to Principal Agents immediately.
+    The admission token it consumed is not restored — mint a new one
+    to re-register.
+    """
     import json
     from axon.config import ga_paths
     from axon.types import RegistryFile
@@ -178,5 +191,5 @@ def resource_remove(
 
     console.print()
     console.print(ok(f"[bold]{target.name}[/bold] removed from [dim]{ctx}[/dim]"))
-    console.print(info(f"[dim]{target.id}[/dim]"))
+    console.print(line(f"[dim]{target.id}[/dim]"))
     console.print()

@@ -6,10 +6,10 @@ from pathlib import Path
 
 import typer
 
-from axon.cli._print import console, ok, warn, fatal, info, step, divider
+from axon.cli._print import console, ok, warn, fatal, line, step, divider
 from axon.cli.ga._prompts import pick_retrieval_strategy
 
-app = typer.Typer(help="Initialize a new Gateway Agent instance.")
+app = typer.Typer()
 
 
 @app.callback(invoke_without_command=True)
@@ -18,7 +18,19 @@ def ga_init(
     port:     int = typer.Option(5001, "--port", "-p", help="Port this GA will listen on"),
     data_dir: str | None = typer.Option(None, "--data-dir", help="Data directory (default: .axon/{name})"),
 ) -> None:
-    """Initialize a new Gateway Agent instance."""
+    """
+    Initialize a new Gateway Agent instance.
+
+    Creates a named GA context: its own data directory (registry, tokens,
+    traces) plus an entry in axon.config.json. Contexts isolate fleets of
+    resources — one GA for internal agents, another for vendor tools —
+    and every gateway-side command targets the ACTIVE context.
+
+    After creating it:
+      axon ga use <name>       make it the active context
+      axon ga serve            start it on the configured port
+      axon token generate      mint a token to admit your first resource
+    """
     from axon.config import read_config, patch_config, GAInstanceConfig, GAPaths
 
     try:
@@ -29,8 +41,8 @@ def ga_init(
     if name in cfg.gateways:
         console.print()
         console.print(warn(f"gateway context [bold]{name}[/bold] already exists"))
-        console.print(info(f"[dim]axon ga use {name}[/dim]   to activate it"))
-        console.print(info(f"[dim]axon ga list[/dim]          to see all contexts"))
+        console.print(line(f"[dim]axon ga use {name}[/dim]   to activate it"))
+        console.print(line(f"[dim]axon ga list[/dim]          to see all contexts"))
         console.print()
         raise typer.Exit(1)
 
@@ -104,7 +116,7 @@ def ga_init(
     console.print(divider())
     console.print(f"  {step(f'[dim]{rel}/traces/[/dim]')}")
     console.print()
-    console.print(info("[dim]next steps[/dim]"))
-    console.print(info(f"[dim]axon ga use {name}[/dim]           activate this context"))
-    console.print(info(f"[dim]axon ga serve --context {name}[/dim]   start this gateway"))
+    console.print(line("[dim]next steps[/dim]"))
+    console.print(line(f"[dim]axon ga use {name}[/dim]           activate this context"))
+    console.print(line(f"[dim]axon ga serve --context {name}[/dim]   start this gateway"))
     console.print()

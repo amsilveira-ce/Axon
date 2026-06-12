@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 import typer
 
-from axon.cli._print import console, ok, warn, fatal, info, step, divider, hint
+from axon.cli._print import console, ok, warn, fatal, line, mark, status, step, divider, hint
 
 app = typer.Typer(help="Manage Gateway Agent connections.")
 
@@ -121,7 +121,7 @@ def _render_eligibility(rows, *, filter_: str | None = None) -> int:
 
     shown = [r for r in rows if _matches_filter(r, filter_)]
     if not shown:
-        console.print(info("[dim](nenhum recurso para este filtro)[/dim]"))
+        console.print(line("[dim](no resources match this filter)[/dim]"))
         return 0
 
     table = Table(show_header=True, header_style="dim", box=None, pad_edge=False, padding=(0, 3, 0, 0))
@@ -132,21 +132,20 @@ def _render_eligibility(rows, *, filter_: str | None = None) -> int:
 
     for r in shown:
         pricing = (
-            "[yellow]pago[/yellow]"
+            "[yellow]paid[/yellow]"
             + (f" [dim]${r.cost_per_call:.4f}[/dim]" if r.cost_per_call is not None else "")
-        ) if r.is_paid else "[dim]gratuito[/dim]"
+        ) if r.is_paid else "[dim]free[/dim]"
 
         if r.auth_scheme == "none":
             auth_col = "[dim]no-auth[/dim]"
         else:
-            mark     = "[green]✓[/green]" if r.auth_ready else "[red]✗[/red]"
-            auth_col = f"{r.auth_scheme} {mark}"
+            auth_col = f"{r.auth_scheme} {mark(r.auth_ready)}"
 
-        status = (
-            "[green]✓ pronto[/green]" if r.eligible
-            else "[red]✗[/red] " + " · ".join(r.reasons)
+        ready_col = (
+            f"{mark(True)} [green]ready[/green]" if r.eligible
+            else f"{mark(False)} " + " · ".join(r.reasons)
         )
-        table.add_row(f"[bold]{r.resource_name}[/bold]", pricing, auth_col, status)
+        table.add_row(f"[bold]{r.resource_name}[/bold]", pricing, auth_col, ready_col)
 
     console.print(table)
     return len(shown)
@@ -156,14 +155,24 @@ def _render_eligibility(rows, *, filter_: str | None = None) -> int:
 
 @app.command("add")
 def gateway_add(
-    url: str = typer.Argument(..., help="Gateway Agent URL (e.g. http://ga.empresa.com/)"),
+    url: str = typer.Argument(..., help="Gateway Agent URL (e.g. http://ga.example.com/)"),
 ) -> None:
-    """Connect the PA to a Gateway Agent."""
+    """
+    Connect the PA to a Gateway Agent.
+
+    Fetches the gateway card at <url>/ga/card, checks the Axon extension
+    (trust level, organization), announces the PA via POST /pa/connect
+    and saves the gateway to axon.config.json. From then on the Resolver
+    queries this GA whenever a capability isn't covered locally.
+
+    Gateways without the Axon extension can still be added — you confirm
+    explicitly and they are marked trust_level=unknown.
+    """
     from axon.config import read_config, patch_config, ConnectedGateway
 
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
-        fatal(f"Invalid URL: '{url}'. Expected format: http://host:port/")
+        fatal(f"invalid URL: '{url}'. expected format: http://host:port/")
 
     try:
         cfg = read_config()
@@ -199,11 +208,11 @@ def gateway_add(
     if axon_meta is None:
         console.print()
         console.print(warn("[bold]Axon extension not found in gateway card[/bold]"))
-        console.print(info("[dim]trust_level will be set to 'unknown'[/dim]"))
+        console.print(line("[dim]trust_level will be set to 'unknown'[/dim]"))
         console.print()
         if not typer.confirm("  Connect anyway?", default=False):
             console.print()
-            console.print(info("[dim]Aborted.[/dim]"))
+            console.print(line("[dim]Aborted.[/dim]"))
             console.print()
             raise typer.Exit(0)
         trust_level  = "unknown"
@@ -223,11 +232,11 @@ def gateway_add(
         if trust_level == "unknown":
             console.print()
             console.print(warn("[bold]trust_level is 'unknown'[/bold]"))
-            console.print(info("[dim]Only connect to gateways you control or trust explicitly.[/dim]"))
+            console.print(line("[dim]Only connect to gateways you control or trust explicitly.[/dim]"))
             console.print()
             if not typer.confirm("  Connect anyway?", default=False):
                 console.print()
-                console.print(info("[dim]Aborted.[/dim]"))
+                console.print(line("[dim]Aborted.[/dim]"))
                 console.print()
                 raise typer.Exit(0)
 
@@ -259,44 +268,44 @@ def gateway_add(
     console.print()
     console.print(ok(f"[bold]{card.name}[/bold] connected"))
     console.print()
-    console.print(info(f"url          [dim]{url_clean}[/dim]"))
-    console.print(info(f"version      [dim]{card.version}[/dim]"))
-    console.print(info(f"trust        {trust_color}"))
+    console.print(line(f"url          [dim]{url_clean}[/dim]"))
+    console.print(line(f"version      [dim]{card.version}[/dim]"))
+    console.print(line(f"trust        {trust_color}"))
     if organization:
-        console.print(info(f"org          [dim]{organization}[/dim]"))
+        console.print(line(f"org          [dim]{organization}[/dim]"))
     console.print()
 
     # passo 2 — anuncia o PA ao GA (registra a conexão)
     cfg2 = read_config()
     try:
         ack = _post_connect(url_clean, _build_pacard(cfg2))
-        console.print(info(
+        console.print(line(
             f"connection   [green]registered[/green] "
             f"[dim]({ack.get('resources_count', '?')} resources)[/dim]"
         ))
     except Exception as e:
-        console.print(info(f"connection   [yellow]skipped[/yellow] [dim]({e})[/dim]"))
+        console.print(line(f"connection   [yellow]skipped[/yellow] [dim]({e})[/dim]"))
 
     # passo 3 — lista recursos do GA + elegibilidade pela política atual
     try:
         rows = _eval_items(_fetch_resources(url_clean), cfg2.pa.resource_policy)
     except Exception as e:
         rows = None
-        console.print(info(f"resources    [yellow]unavailable[/yellow] [dim]({e})[/dim]"))
+        console.print(line(f"resources    [yellow]unavailable[/yellow] [dim]({e})[/dim]"))
 
     if rows is not None:
         console.print()
-        console.print("  [bold]RECURSOS[/bold]")
+        console.print("  [bold]resources[/bold]")
         console.print()
         _render_eligibility(rows)
         eligible = sum(1 for r in rows if r.eligible)
         console.print()
-        console.print(info(
-            f"[dim]{eligible}/{len(rows)} prontos — configure os tokens ausentes e revise política[/dim]"
+        console.print(line(
+            f"[dim]{eligible}/{len(rows)} ready — set the missing tokens and review the policy[/dim]"
         ))
 
     console.print()
-    console.print(info("[dim]NOTE: restart the PA for the new gateway to be used[/dim]"))
+    console.print(line("[dim]note: restart the PA for the new gateway to be used[/dim]"))
     console.print()
 
 
@@ -304,7 +313,12 @@ def gateway_add(
 
 @app.command("list")
 def gateway_list() -> None:
-    """List connected Gateway Agents with live status."""
+    """
+    List connected Gateway Agents with live status.
+
+    Pings each gateway's card endpoint and shows ◆ online (with resource
+    count) or ■ offline. last_seen is updated for gateways that answer.
+    """
     from axon.config import read_config, patch_config
 
     try:
@@ -316,8 +330,8 @@ def gateway_list() -> None:
     console.print()
 
     if not gateways:
-        console.print(info("[dim]no gateways connected[/dim]"))
-        console.print(info("[dim]add with: axon pa gateway add <url>[/dim]"))
+        console.print(line("[dim]no gateways connected[/dim]"))
+        console.print(line("[dim]add with: axon pa gateway add <url>[/dim]"))
         console.print()
         return
 
@@ -331,25 +345,23 @@ def gateway_list() -> None:
             raw        = _fetch_gateway_card(g.url)
             card, meta = _parse_card(raw)
             resources  = meta.resources_count if meta else 0
-            status     = "[green]✓[/green]"
             status_txt = "online"
             updated[i] = g.model_copy(update={"last_seen": now})
             online += 1
         except RuntimeError:
-            status     = "[red]✗[/red]"
             status_txt = "offline"
             resources  = None
 
-        # linha compacta: ✓  GA Corporativo    http://...   online
-        name_col = f"[bold]{g.name}[/bold]"
-        url_col  = f"[dim]{g.url}[/dim]"
-        stat_col = f"[green]online[/green]" if status_txt == "online" else "[red]offline[/red]"
-        res_col  = f"[dim]{resources} resources[/dim]" if resources is not None else "[dim]—[/dim]"
+        # compact row: ◆  ga-corp    http://...   online
+        is_online = status_txt == "online"
+        name_col  = f"[bold]{g.name}[/bold]"
+        url_col   = f"[dim]{g.url}[/dim]"
+        res_col   = f"[dim]{resources} resources[/dim]" if resources is not None else "[dim]—[/dim]"
 
-        console.print(f"  {status}  {name_col:<30} {url_col:<45} {stat_col}  {res_col}")
+        console.print(f"  {mark(is_online)}  {name_col:<30} {url_col:<45} {status(status_txt)}  {res_col}")
 
     console.print()
-    console.print(info(f"[dim]{online}/{len(gateways)} online[/dim]"))
+    console.print(line(f"[dim]{online}/{len(gateways)} online[/dim]"))
     console.print()
 
     # persiste last_seen atualizado
@@ -364,7 +376,13 @@ def gateway_list() -> None:
 def gateway_remove(
     url: str = typer.Argument(..., help="Gateway URL to remove"),
 ) -> None:
-    """Disconnect a Gateway Agent."""
+    """
+    Disconnect a Gateway Agent.
+
+    Removes it from axon.config.json only — no remote state is touched.
+    Resources already discovered through it remain in the PA's cache
+    until evicted.
+    """
     from axon.config import read_config, patch_config
 
     try:
@@ -389,7 +407,7 @@ def gateway_remove(
 
     console.print()
     console.print(ok(f"[bold]{target.name}[/bold] disconnected"))
-    console.print(info(f"[dim]{url_clean}[/dim]"))
+    console.print(line(f"[dim]{url_clean}[/dim]"))
     console.print()
 
 
@@ -399,7 +417,12 @@ def gateway_remove(
 def gateway_ping(
     url: str | None = typer.Argument(None, help="Gateway URL to ping. Omit to ping all."),
 ) -> None:
-    """Check if Gateway Agents are reachable and update last_seen."""
+    """
+    Check if Gateway Agents are reachable and update last_seen.
+
+    Pings one gateway (pass its URL) or all of them, showing version,
+    trust level and resource count for the ones that answer.
+    """
     from axon.config import read_config, patch_config
 
     try:
@@ -414,7 +437,7 @@ def gateway_ping(
 
     if not targets:
         console.print()
-        console.print(info("[dim]no gateways connected — add with: axon pa gateway add <url>[/dim]"))
+        console.print(line("[dim]no gateways connected — add with: axon pa gateway add <url>[/dim]"))
         console.print()
         return
 
@@ -436,12 +459,12 @@ def gateway_ping(
                     updated[i] = g.model_copy(update={"last_seen": now})
                     break
 
-            console.print(info(
-                f"[green]online[/green]  [dim]{card.name} v{card.version} · "
+            console.print(line(
+                f"{status('online')}  [dim]{card.name} v{card.version} · "
                 f"trust={trust} · {count} resources[/dim]"
             ))
         except RuntimeError as e:
-            console.print(info(f"[red]offline[/red]  [dim]{e}[/dim]"))
+            console.print(line(f"{status('offline')}  [dim]{e}[/dim]"))
 
         console.print(divider())
 
@@ -461,14 +484,14 @@ def gateway_resources(
         None, "--filter", help="eligible | auth-missing | paid"
     ),
     context: str | None = typer.Option(
-        None, "--context", help="Filtra por um GA específico (nome ou url)"
+        None, "--context", help="Filter by a specific Gateway Agent (name or URL)"
     ),
 ) -> None:
     """
     List resources across connected Gateway Agents with policy eligibility.
 
-    O status (✓ pronto / ✗ motivo) usa a mesma avaliação que o Resolver aplica
-    ao escolher recursos — o que aparece como 'pronto' é o que o PA usaria.
+    The ready/blocked column uses the same evaluation the Resolver applies
+    when picking resources — whatever shows as ready is what the PA would use.
     """
     from axon.config import read_config
 
@@ -493,7 +516,7 @@ def gateway_resources(
 
     console.print()
     if not gateways:
-        console.print(info("[dim]no gateways connected — add with: axon pa gateway add <url>[/dim]"))
+        console.print(line("[dim]no gateways connected — add with: axon pa gateway add <url>[/dim]"))
         console.print()
         return
 
@@ -507,7 +530,7 @@ def gateway_resources(
         try:
             rows = _eval_items(_fetch_resources(g.url), policy)
         except Exception as e:
-            console.print(info(f"[red]offline[/red] [dim]{e}[/dim]"))
+            console.print(line(f"{status('offline')} [dim]{e}[/dim]"))
             console.print()
             continue
 
@@ -516,9 +539,9 @@ def gateway_resources(
         total_eligible += eligible
         total_count    += len(rows)
         console.print()
-        console.print(info(f"[dim]{eligible}/{len(rows)} prontos[/dim]"))
+        console.print(line(f"[dim]{eligible}/{len(rows)} ready[/dim]"))
         console.print()
 
     if len(gateways) > 1:
-        console.print(info(f"[dim]total: {total_eligible}/{total_count} prontos em {len(gateways)} gateways[/dim]"))
+        console.print(line(f"[dim]total: {total_eligible}/{total_count} ready across {len(gateways)} gateways[/dim]"))
         console.print()

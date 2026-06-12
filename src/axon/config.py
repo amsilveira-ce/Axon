@@ -386,7 +386,8 @@ class PAConfig(BaseModel):
     Attributes:
         port: HTTP port the PA API listens on.
         default_reasoning: Default execution strategy (``"react"`` or ``"rewoo"``).
-        max_iterations: Maximum Executor loop iterations per subtask.
+        max_clarification_question: Maximum clarifying questions per objective.
+        max_plan_subtasks: Maximum subtasks the Decomposer may emit per plan.
         gateways: Registered Gateway Agents, ordered by preference.
         llm: LLM backend connection settings.
         budget: Hard resource limits per run.

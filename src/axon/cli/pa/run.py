@@ -4,7 +4,7 @@ import logging
 
 import typer
 
-from axon.cli._print import console, ok, fatal, divider, step, info, warn, err, setup_logging
+from axon.cli._print import console, ok, fatal, divider, step, line, warn, err, setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ _EPILOG = (
     '  axon pa run -q "Analyze patient data" -v'
 )
 
-app = typer.Typer(help="Run the Principal Agent.", epilog=_EPILOG)
+app = typer.Typer(epilog=_EPILOG)
 
 
 def _guide_missing_query() -> None:
@@ -24,17 +24,17 @@ def _guide_missing_query() -> None:
     console.print()
     console.print(f"  {err('missing required option [bold]--query[/bold]')}")
     console.print()
-    console.print(info("[bold]axon pa run[/bold] sends a one-shot query to the Principal Agent."))
+    console.print(line("[bold]axon pa run[/bold] sends a one-shot query to the Principal Agent."))
     console.print()
-    console.print(info("[cyan]-q[/cyan], [cyan]--query[/cyan]   [dim]TEXT[/dim]  what to ask the agent  [red](required)[/red]"))
-    console.print(info("[cyan]-l[/cyan], [cyan]--lang[/cyan]    [dim]TEXT[/dim]  reply in this language — e.g. Portuguese, Spanish"))
-    console.print(info("[cyan]-v[/cyan], [cyan]--verbose[/cyan] [dim]FLAG[/dim]  show context injected into the LLM and extraction details"))
+    console.print(line("[cyan]-q[/cyan], [cyan]--query[/cyan]   [dim]TEXT[/dim]  what to ask the agent  [red](required)[/red]"))
+    console.print(line("[cyan]-l[/cyan], [cyan]--lang[/cyan]    [dim]TEXT[/dim]  reply in this language — e.g. Portuguese, Spanish"))
+    console.print(line("[cyan]-v[/cyan], [cyan]--verbose[/cyan] [dim]FLAG[/dim]  show context injected into the LLM and extraction details"))
     console.print()
-    console.print(info('[dim]$[/dim] axon pa run -q "Create a report about Q3 results"'))
-    console.print(info('[dim]$[/dim] axon pa run -q "Resumir as vendas do Q3" -l Portuguese'))
-    console.print(info('[dim]$[/dim] axon pa run -q "Analyze patient data" -v'))
+    console.print(line('[dim]$[/dim] axon pa run -q "Create a report about Q3 results"'))
+    console.print(line('[dim]$[/dim] axon pa run -q "Resumir as vendas do Q3" -l Portuguese'))
+    console.print(line('[dim]$[/dim] axon pa run -q "Analyze patient data" -v'))
     console.print()
-    console.print(info("[dim]full help:[/dim]  axon pa run --help"))
+    console.print(line("[dim]full help:[/dim]  axon pa run --help"))
     console.print()
     raise typer.Exit(2)
 
@@ -51,7 +51,18 @@ def run(
         False, "--verbose", "-v", help="Show context injected into the LLM and extraction details."
     ),
 ) -> None:
-    """Send a one-shot query to the Principal Agent and print the response."""
+    """
+    Send a one-shot query to the Principal Agent and print the response.
+
+    Runs the full pipeline: intent extraction → decomposition → planning
+    → resource resolution (local tools first, then cached resources,
+    then connected Gateway Agents) → execution → response synthesis.
+
+    Use --lang to work in another language: the query is translated to
+    English for the pipeline and the response translated back. Use
+    --verbose to watch every stage. Each run is persisted as a trace —
+    replay it with 'axon pa inspect'.
+    """
     setup_logging(verbose)
 
     from axon.config import read_config, paths
@@ -101,7 +112,7 @@ def run(
                 ).strip()
             except Exception as exc:
                 logger.info("[PA run] translation (query → English) failed", exc_info=True)
-                fatal(f"Translation error (query → English): {exc}")
+                fatal(f"translation error (query → English): {exc}")
 
         console.print(f"  {step('running principal agent...')}")
         logger.info("[PA run] running principal agent")
@@ -109,7 +120,7 @@ def run(
             response_en = agent.run(query_en)
         except Exception as exc:
             logger.info("[PA run] agent run failed", exc_info=True)
-            fatal(f"Agent error while processing the query: {exc}")
+            fatal(f"agent error while processing the query: {exc}")
 
         logger.info("[PA run] agent run finished — response length %d chars", len(response_en))
 
@@ -146,10 +157,10 @@ def run(
         console.print()
         console.print(f"  {ok('[bold]response[/bold]')}")
         if lang:
-            console.print(info(f"[dim]language: {lang}[/dim]"))
+            console.print(line(f"[dim]language: {lang}[/dim]"))
         console.print()
-        for line in response.splitlines():
-            console.print(f"  [dim]│[/dim]  {line}")
+        for ln in response.splitlines():
+            console.print(line(ln))
         console.print()
         console.print(f"  [dim]session: {agent.session_id}[/dim]")
         console.print()

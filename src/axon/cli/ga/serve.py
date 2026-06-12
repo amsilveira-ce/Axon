@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import typer
 
-from axon.cli._print import console, ok, fatal, info, step, divider
+from axon.cli._print import console, ok, fatal, line, step, divider
 
-app = typer.Typer(help="Start a Gateway Agent instance.")
+app = typer.Typer()
 
 
 @app.callback(invoke_without_command=True)
@@ -15,7 +15,19 @@ def serve(
     port:    int | None = typer.Option(None, "--port", "-p", help="Port override"),
     reload:  bool       = typer.Option(False, "--reload", help="Auto-reload on code changes (dev mode)"),
 ) -> None:
-    """Start the Gateway Agent HTTP server."""
+    """
+    Start the Gateway Agent HTTP server.
+
+    Serves the active context by default ('axon ga context' to check,
+    --context to override). Runs in the foreground — stop with ctrl+c.
+
+    Endpoints exposed to Principal Agents:
+      GET  /ga/card                    identity + capabilities
+      POST /pa/connect                 PA handshake
+      GET  /ga/resources               full resource listing
+      POST /ga/resources/search        capability search (keyword/embedding)
+      POST /ga/resources/{id}/invoke   proxy execution for stdio tools
+    """
     import os
     import uvicorn
     from axon.config import _ENV_GA_CONTEXT
@@ -33,17 +45,17 @@ def serve(
     console.print()
     console.print(f"  {step(f'[bold]Axon[/bold] Gateway Agent [cyan]{ctx}[/cyan]')}")
     console.print(divider())
-    console.print(info(f"context    [cyan]{ctx}[/cyan]"))
-    console.print(info(f"name       [dim]{ga.name}[/dim]"))
-    console.print(info(f"host       [cyan]{host}:{effective_port}[/cyan]"))
-    console.print(info(f"card       [dim]http://{host}:{effective_port}/ga/card[/dim]"))
-    console.print(info(f"docs       [dim]http://{host}:{effective_port}/docs[/dim]"))
-    console.print(info(f"registry   [dim]{ga.paths.registry}[/dim]"))
-    console.print(info(f"retrieval  [dim]{ga.instance.retrieval_strategy}[/dim]", ))
+    console.print(line(f"context    [cyan]{ctx}[/cyan]"))
+    console.print(line(f"name       [dim]{ga.name}[/dim]"))
+    console.print(line(f"host       [cyan]{host}:{effective_port}[/cyan]"))
+    console.print(line(f"card       [dim]http://{host}:{effective_port}/ga/card[/dim]"))
+    console.print(line(f"docs       [dim]http://{host}:{effective_port}/docs[/dim]"))
+    console.print(line(f"registry   [dim]{ga.paths.registry}[/dim]"))
+    console.print(line(f"retrieval  [dim]{ga.instance.retrieval_strategy}[/dim]", ))
     if ga.instance.retrieval_strategy == "embedding" and ga.instance.embedding_model:
-        console.print(info(f"embed model [dim]{ga.instance.embedding_model}[/dim]"))
+        console.print(line(f"embed model [dim]{ga.instance.embedding_model}[/dim]"))
     if reload:
-        console.print(info("[yellow]reload    on — AXON_GA_CONTEXT inherited by workers[/yellow]"))
+        console.print(line("[yellow]reload    on — AXON_GA_CONTEXT inherited by workers[/yellow]"))
     console.print()
     console.print(ok("Gateway Agent starting..."))
     console.print()
