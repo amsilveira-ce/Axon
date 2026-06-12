@@ -1,0 +1,54 @@
+{
+  "version": "0.1.0",
+  "description": "Queries where the IntentExtractor should produce READY: all required information is explicit in the query itself. These must pass with or without a domain skill — they prove the skill does not break the base behavior.",
+  "cases": [
+    {
+      "id": "na_01",
+      "query": "look up the medical record of patient João Silva",
+      "skill": "hospital.md",
+      "expected": "READY",
+      "expected_values": ["João Silva"],
+      "note": "Patient name is explicit. No inference required."
+    },
+    {
+      "id": "na_02",
+      "query": "check for drug interactions between metformin and losartan",
+      "skill": "hospital.md",
+      "expected": "READY",
+      "expected_values": ["metformin", "losartan"],
+      "note": "Both drugs are explicit. Self-contained query."
+    },
+    {
+      "id": "na_03",
+      "query": "send the discharge summary of patient João Silva to dr.carlos@einstein.com",
+      "skill": "hospital.md",
+      "expected": "READY",
+      "expected_values": ["João Silva", "dr.carlos@einstein.com"],
+      "note": "Recipient and patient are explicit — irreversible action fully specified."
+    },
+    {
+      "id": "na_04",
+      "query": "draft a legal opinion on service agreement no. 2026-047",
+      "skill": "legal_firm.md",
+      "expected": "READY",
+      "expected_values": ["2026-047"],
+      "note": "Contract reference is explicit. Document type is stated."
+    },
+    {
+      "id": "na_05",
+      "query": "review contract 2026-047 for LGPD compliance gaps",
+      "skill": "legal_firm.md",
+      "expected": "READY",
+      "expected_values": ["2026-047", "LGPD"],
+      "note": "Contract and the compliance framework are both explicit."
+    },
+    {
+      "id": "na_06",
+      "query": "create a 5-slide pitch deck about Q3 results for investors",
+      "skill": null,
+      "expected": "READY",
+      "expected_values": ["Q3", "investors"],
+      "note": "Baseline: the default prompt with a fully specified query."
+    }
+  ]
+}

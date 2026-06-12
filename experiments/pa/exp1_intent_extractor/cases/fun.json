@@ -1,0 +1,29 @@
+{
+  "version": "0.1.0",
+  "description": "Deliberately silly cases. The framework is serious; the domain doesn't have to be. Proves the skill mechanism is domain-agnostic — the same machinery that resolves hospital defaults resolves duck puns.",
+  "cases": [
+    {
+      "id": "fun_01",
+      "query": "presentation about ducks for kids",
+      "skill": "duck_studio.md",
+      "expected": "READY",
+      "expected_values": ["ducks", "kids"],
+      "note": "Studio defaults should kick in: 5 slides, rubber-duck yellow, Quack Quiz."
+    },
+    {
+      "id": "fun_02",
+      "query": "the usual",
+      "skill": "duck_studio.md",
+      "expected": "READY",
+      "expected_values": ["duck"],
+      "note": "The skill literally defines 'the usual' — duck facts for ducklings. Maximum domain-knowledge rescue."
+    },
+    {
+      "id": "fun_03",
+      "query": "the usual",
+      "skill": null,
+      "expected": "CLARIFY",
+      "note": "Contrast pair for fun_02. Without the skill, 'the usual' means nothing."
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "version": "0.1.0",
+  "description": "Underspecified queries. Without a domain skill the extractor must ask for clarification; with the skill, domain defaults can resolve the gap and produce READY. The contrast pairs (amb_02/amb_03 and amb_04/amb_05) prove the skill is what changes the outcome.",
+  "cases": [
+    {
+      "id": "amb_01",
+      "query": "help with João",
+      "skill": "hospital.md",
+      "expected": "CLARIFY",
+      "note": "Genuinely unclear even with the skill — no intent verb. The skill must NOT make the extractor hallucinate a goal."
+    },
+    {
+      "id": "amb_02",
+      "query": "generate the report",
+      "skill": "hospital.md",
+      "expected": "READY",
+      "expected_values": ["PDF"],
+      "note": "Skill default rescues it: clinical report, PDF, responsible physician. Contrast pair with amb_03."
+    },
+    {
+      "id": "amb_03",
+      "query": "generate the report",
+      "skill": null,
+      "expected": "CLARIFY",
+      "note": "Same query as amb_02 with no skill — which report? The default prompt must ask."
+    },
+    {
+      "id": "amb_04",
+      "query": "review the contract",
+      "skill": "legal_firm.md",
+      "expected": "READY",
+      "expected_values": [],
+      "note": "Skill interpretation: the client's contract in active context, risk-clause review. Contrast pair with amb_05."
+    },
+    {
+      "id": "amb_05",
+      "query": "review the contract",
+      "skill": null,
+      "expected": "CLARIFY",
+      "note": "Same query as amb_04 with no skill — which contract? The default prompt must ask."
+    },
+    {
+      "id": "amb_06",
+      "query": "help me with my project",
+      "skill": null,
+      "expected": "CLARIFY",
+      "note": "Baseline: genuinely unclear query, no skill. The default prompt must ask."
+    }
+  ]
+}

@@ -18,6 +18,10 @@ How to handle missing details:
 
 Ask a clarifying question ONLY when one of these is true:
 - The core goal is genuinely unclear — you cannot tell what the user wants done.
+- The query refers to a routine or prior arrangement ("the usual", "like last
+  time", "the same one") that neither the query, Memory, history, nor the
+  domain context defines. A goal like "proceed with the usual task" is not a
+  goal — ask what the routine is instead of inventing one.
 - Acting on a wrong guess would be costly or irreversible — e.g. sending a
   message, spending money, deleting or overwriting something, or targeting an
   unknown recipient/account.
