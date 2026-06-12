@@ -27,8 +27,17 @@ class ResourceType(str, Enum):
 
 
 class ResourceStatus(str, Enum):
+    """
+    Estado observável de um recurso registrado.
+
+    offline e drift são estados DISTINTOS por design:
+      offline → o recurso não responde — "conserte a conexão"
+      drift   → o recurso responde, mas o contrato (agent card) mudou desde
+                o registro — "re-valide antes de voltar a confiar"
+    """
     online     = "online"
     offline    = "offline"
+    drift      = "drift"
     validating = "validating"
     failed     = "failed"
 

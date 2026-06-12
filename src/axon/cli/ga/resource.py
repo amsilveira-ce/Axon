@@ -115,11 +115,11 @@ def resource_ping(
 
     updated = False
     for r in targets:
-        result = check(r)
+        result = check(r, p)
         status_color = {
-            "online":     "[green]online[/green]",
-            "offline":    "[red]offline[/red]",
-            "validating": "[yellow]drift detected[/yellow]",
+            "online":  "[green]online[/green]",
+            "offline": "[red]offline[/red]",
+            "drift":   "[yellow]drift detected[/yellow]",
         }.get(result.status.value, result.status.value)
 
         console.print(f"  {step(f'[bold]{r.name}[/bold]  {status_color}')}")

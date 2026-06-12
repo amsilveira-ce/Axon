@@ -281,10 +281,13 @@ def validate_agent(url: str, paths: "GAPaths") -> ValidationResult:  # type: ign
             ok=False, step="axon_token",
             error=str(token_err)
         )
-    
-    # Etapa 4: Fingerprint 
 
-    fp = fingerprint(raw)
+    # Etapa 4: Fingerprint — HMAC-SHA256 keyed pelo token de admissão.
+    # O monitor de integridade (health.py) recomputa com o mesmo token
+    # (via tokens.json) para detectar drift do agent card.
+
+    from axon.ga.registry import fingerprint_of_agent_card
+    fp = fingerprint_of_agent_card(card, axon_meta.token)
 
     # Tudo ocorreu corretamente na validação e retornamos uma Validação com ok True
 

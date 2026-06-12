@@ -101,8 +101,8 @@ def add_agent(
     except Exception:
         console.print(warn("could not update token status"))
 
-    # ping imediato pós-registro
-    health = check_agent(resource)
+    # ping imediato pós-registro — o token é a chave do fingerprint HMAC
+    health = check_agent(resource, token=result.verified_token)
     try:
         update_status(resource.id, health.status, ga.paths)
     except Exception:
@@ -110,7 +110,7 @@ def add_agent(
 
     if health.status == ResourceStatus.online:
         console.print(f"  {step('health check     [green]online[/green] · fingerprint ok')}")
-    elif health.status == ResourceStatus.validating:
+    elif health.status == ResourceStatus.drift:
         console.print(f"  {step('health check     [yellow]drift detected[/yellow] · agent card changed')}")
         for line in (health.error or "").split("\n"):
             console.print(f"  [dim]{line}[/dim]")
@@ -131,9 +131,9 @@ def add_agent(
     console.print(info(f"saved to    [dim]{ga.paths.registry}[/dim]"))
 
     status_display = {
-        ResourceStatus.online:     "[green]online[/green]",
-        ResourceStatus.validating: "[yellow]drift detected — re-register to update[/yellow]",
-        ResourceStatus.offline:    "[red]offline — agent unreachable after registration[/red]",
+        ResourceStatus.online:  "[green]online[/green]",
+        ResourceStatus.drift:   "[yellow]drift detected — re-register to update[/yellow]",
+        ResourceStatus.offline: "[red]offline — agent unreachable after registration[/red]",
     }.get(health.status, health.status.value)
     console.print(info(f"status      {status_display}"))
     console.print()
