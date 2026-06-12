@@ -170,7 +170,7 @@ class Executor:
                     subtask_id=subtask.id,
                     tool=assignment.manifest.name,
                     output=cached,
-                    provenance=_provenance(assignment.ga_url, assignment.manifest),
+                    provenance=_provenance(assignment.manifest),
                 ))
                 state.progress[subtask.id] = SubtaskStatus.COMPLETED
                 state.append_step(
@@ -375,7 +375,7 @@ class Executor:
                 subtask_id=subtask.id,
                 tool=manifest.name,
                 output=result,
-                provenance=_provenance(assignment.ga_url, manifest),
+                provenance=_provenance(manifest),
             ))
             state.progress[subtask.id]  = SubtaskStatus.COMPLETED
             state.tool_cache[cache_key] = result   # duplicata na mesma run → cache hit
@@ -575,16 +575,21 @@ def _select_tool(manifest: "ResourceManifest", tools: list[str]) -> str | None:
     return None
 
 
-def _provenance(ga_url: str, manifest: "ResourceManifest") -> Provenance:
+def _provenance(manifest: "ResourceManifest") -> Provenance:
     """
-    Origem do Fact, para rastreabilidade.
+    Origem do Fact, para rastreabilidade — derivada do manifest que executou
+    (pode ser uma alternativa, não necessariamente o primary).
 
-    ga_url vazio → recurso do pool local (LOCAL). Senão, pelo tipo do recurso:
-    agente → A2A, MCP → MCP. Recebe o manifest específico que executou (pode ser
-    uma alternativa, não necessariamente o primary).
+    agente              → A2A
+    tool do pool local  → LOCAL (resource_id "local-*", convenção do LocalResourcePool)
+    demais MCP          → MCP (HTTP direto ou ga_proxy)
+
+    Derivar do manifest, e não do Step do Resolver (assignment.ga_url), mantém
+    a proveniência estável entre runs: um agente A2A vindo do ResourceCache
+    (Step 1) é tão A2A quanto no run em que foi descoberto via GA (Step 2).
     """
-    if not ga_url:
-        return Provenance.LOCAL
     if manifest.type == ResourceType.agent:
         return Provenance.A2A
+    if manifest.resource_id.startswith("local-") and not manifest.ga_url:
+        return Provenance.LOCAL
     return Provenance.MCP
